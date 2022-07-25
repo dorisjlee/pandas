@@ -4,6 +4,8 @@ import numpy as np
 from numpy import iinfo
 import pytest
 
+from pandas.compat import is_platform_arm
+
 import pandas as pd
 from pandas import (
     DataFrame,
@@ -388,19 +390,19 @@ def test_timedelta(transform_assert_equal):
     assert_equal(result, expected)
 
 
-def test_period(transform_assert_equal):
+def test_period(request, transform_assert_equal):
     transform, assert_equal = transform_assert_equal
 
     idx = pd.period_range("2011-01", periods=3, freq="M", name="")
     inp = transform(idx)
 
-    if isinstance(inp, Index):
-        result = to_numeric(inp)
-        expected = transform(idx.asi8)
-        assert_equal(result, expected)
-    else:
-        # TODO: PeriodDtype, so support it in to_numeric.
-        pytest.skip("Missing PeriodDtype support in to_numeric")
+    if not isinstance(inp, Index):
+        request.node.add_marker(
+            pytest.mark.xfail(reason="Missing PeriodDtype support in to_numeric")
+        )
+    result = to_numeric(inp)
+    expected = transform(idx.asi8)
+    assert_equal(result, expected)
 
 
 @pytest.mark.parametrize(
@@ -568,6 +570,14 @@ def test_downcast_limits(dtype, downcast, min_max):
     # see gh-14404: test the limits of each downcast.
     series = to_numeric(Series(min_max), downcast=downcast)
     assert series.dtype == dtype
+
+
+def test_downcast_float64_to_float32():
+    # GH-43693: Check float64 preservation when >= 16,777,217
+    series = Series([16777217.0, np.finfo(np.float64).max, np.nan], dtype=np.float64)
+    result = to_numeric(series, downcast="float")
+
+    assert series.dtype == result.dtype
 
 
 @pytest.mark.parametrize(
@@ -750,7 +760,7 @@ def test_to_numeric_from_nullable_string(values, nullable_string_dtype, expected
             "UInt64",
             "signed",
             "UInt64",
-            marks=pytest.mark.xfail(reason="GH38798"),
+            marks=pytest.mark.xfail(not is_platform_arm(), reason="GH38798"),
         ),
         ([1, 1], "Int64", "unsigned", "UInt8"),
         ([1.0, 1.0], "Float32", "unsigned", "UInt8"),
@@ -760,6 +770,8 @@ def test_to_numeric_from_nullable_string(values, nullable_string_dtype, expected
         ([-1, -1], "Int32", "unsigned", "Int32"),
         ([1, 1], "Float64", "float", "Float32"),
         ([1, 1.1], "Float64", "float", "Float32"),
+        ([1, 1], "Float32", "float", "Float32"),
+        ([1, 1.1], "Float32", "float", "Float32"),
     ),
 )
 def test_downcast_nullable_numeric(data, input_dtype, downcast, expected_dtype):
@@ -780,3 +792,10 @@ def test_downcast_nullable_mask_is_copied():
 
     arr[1] = pd.NA  # should not modify result
     tm.assert_extension_array_equal(result, expected)
+
+
+def test_to_numeric_scientific_notation():
+    # GH 15898
+    result = to_numeric("1.7e+308")
+    expected = np.float64(1.7e308)
+    assert result == expected

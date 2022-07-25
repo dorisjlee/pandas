@@ -5,19 +5,23 @@ Based on code from Jack Cushman (github.com/jcushman/xport).
 
 The file format is defined here:
 
-https://support.sas.com/techsup/technote/ts140.pdf
+https://support.sas.com/content/dam/SAS/support/en/technical-papers/record-layout-of-a-sas-version-5-or-6-data-set-in-sas-transport-xport-format.pdf
 """
+from __future__ import annotations
+
 from collections import abc
 from datetime import datetime
 import struct
-from typing import (
-    IO,
-    cast,
-)
 import warnings
 
 import numpy as np
 
+from pandas._typing import (
+    CompressionOptions,
+    DatetimeNaTType,
+    FilePath,
+    ReadBuffer,
+)
 from pandas.util._decorators import Appender
 
 import pandas as pd
@@ -137,8 +141,8 @@ A DataFrame.
 """
 
 
-def _parse_date(datestr: str) -> datetime:
-    """ Given a date in xport format, return Python date. """
+def _parse_date(datestr: str) -> DatetimeNaTType:
+    """Given a date in xport format, return Python date."""
     try:
         # e.g. "16FEB11:10:07:55"
         return datetime.strptime(datestr, "%d%b%y:%H:%M:%S")
@@ -248,8 +252,13 @@ class XportReader(ReaderBase, abc.Iterator):
     __doc__ = _xport_reader_doc
 
     def __init__(
-        self, filepath_or_buffer, index=None, encoding="ISO-8859-1", chunksize=None
-    ):
+        self,
+        filepath_or_buffer: FilePath | ReadBuffer[bytes],
+        index=None,
+        encoding: str | None = "ISO-8859-1",
+        chunksize=None,
+        compression: CompressionOptions = "infer",
+    ) -> None:
 
         self._encoding = encoding
         self._lines_read = 0
@@ -257,9 +266,13 @@ class XportReader(ReaderBase, abc.Iterator):
         self._chunksize = chunksize
 
         self.handles = get_handle(
-            filepath_or_buffer, "rb", encoding=encoding, is_text=False
+            filepath_or_buffer,
+            "rb",
+            encoding=encoding,
+            is_text=False,
+            compression=compression,
         )
-        self.filepath_or_buffer = cast(IO[bytes], self.handles.handle)
+        self.filepath_or_buffer = self.handles.handle
 
         try:
             self._read_header()
@@ -267,7 +280,7 @@ class XportReader(ReaderBase, abc.Iterator):
             self.close()
             raise
 
-    def close(self):
+    def close(self) -> None:
         self.handles.close()
 
     def _get_row(self):
@@ -279,6 +292,12 @@ class XportReader(ReaderBase, abc.Iterator):
         # read file header
         line1 = self._get_row()
         if line1 != _correct_line1:
+            if "**COMPRESSED**" in line1:
+                # this was created with the PROC CPORT method and can't be read
+                # https://documentation.sas.com/doc/en/pgmsascdc/9.4_3.5/movefile/p1bm6aqp3fw4uin1hucwh718f6kp.htm
+                raise ValueError(
+                    "Header record indicates a CPORT file, which is not readable."
+                )
             raise ValueError("Header record is not an XPORT file.")
 
         line2 = self._get_row()
@@ -377,7 +396,7 @@ class XportReader(ReaderBase, abc.Iterator):
         dtype = np.dtype(dtypel)
         self._dtype = dtype
 
-    def __next__(self):
+    def __next__(self) -> pd.DataFrame:
         return self.read(nrows=self._chunksize or 1)
 
     def _record_count(self) -> int:
@@ -393,7 +412,7 @@ class XportReader(ReaderBase, abc.Iterator):
         total_records_length = self.filepath_or_buffer.tell() - self.record_start
 
         if total_records_length % 80 != 0:
-            warnings.warn("xport file may be corrupted")
+            warnings.warn("xport file may be corrupted.")
 
         if self.record_length > 80:
             self.filepath_or_buffer.seek(self.record_start)
@@ -415,7 +434,7 @@ class XportReader(ReaderBase, abc.Iterator):
 
         return (total_records_length - tail_pad) // self.record_length
 
-    def get_chunk(self, size=None):
+    def get_chunk(self, size=None) -> pd.DataFrame:
         """
         Reads lines from Xport file and returns as dataframe
 
@@ -444,7 +463,7 @@ class XportReader(ReaderBase, abc.Iterator):
         return miss
 
     @Appender(_read_method_doc)
-    def read(self, nrows=None):
+    def read(self, nrows: int | None = None) -> pd.DataFrame:
 
         if nrows is None:
             nrows = self.nobs

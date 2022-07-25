@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import os
+from typing import Iterator
 
 
 @contextlib.contextmanager
-def rewrite_exception(old_name: str, new_name: str):
+def rewrite_exception(old_name: str, new_name: str) -> Iterator[None]:
     """
     Rewrite the message of an exception.
     """
@@ -25,23 +27,23 @@ def rewrite_exception(old_name: str, new_name: str):
 
 def find_stack_level() -> int:
     """
-    Find the appropriate stacklevel with which to issue a warning for astype.
+    Find the first place in the stack that is not inside pandas
+    (tests notwithstanding).
     """
-    stack = inspect.stack()
 
-    # find the lowest-level "astype" call that got us here
-    for n in range(2, 6):
-        if stack[n].function == "astype":
+    import pandas as pd
+
+    pkg_dir = os.path.dirname(pd.__file__)
+    test_dir = os.path.join(pkg_dir, "tests")
+
+    # https://stackoverflow.com/questions/17407119/python-inspect-stack-is-slow
+    frame = inspect.currentframe()
+    n = 0
+    while frame:
+        fname = inspect.getfile(frame)
+        if fname.startswith(pkg_dir) and not fname.startswith(test_dir):
+            frame = frame.f_back
+            n += 1
+        else:
             break
-
-    while stack[n].function in ["astype", "apply", "astype_array_safe", "astype_array"]:
-        # e.g.
-        #  bump up Block.astype -> BlockManager.astype -> NDFrame.astype
-        #  bump up Datetime.Array.astype -> DatetimeIndex.astype
-        n += 1
-
-    if stack[n].function == "__init__":
-        # Series.__init__
-        n += 1
-
     return n

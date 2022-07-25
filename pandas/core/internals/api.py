@@ -15,13 +15,16 @@ from pandas._typing import Dtype
 
 from pandas.core.dtypes.common import (
     is_datetime64tz_dtype,
+    is_period_dtype,
     pandas_dtype,
 )
 
 from pandas.core.arrays import DatetimeArray
+from pandas.core.construction import extract_array
 from pandas.core.internals.blocks import (
     Block,
     DatetimeTZBlock,
+    ExtensionBlock,
     check_ndim,
     ensure_block_shape,
     extract_pandas_array,
@@ -49,21 +52,28 @@ def make_block(
 
     values, dtype = extract_pandas_array(values, dtype, ndim)
 
-    needs_reshape = False
+    if klass is ExtensionBlock and is_period_dtype(values.dtype):
+        # GH-44681 changed PeriodArray to be stored in the 2D
+        # NDArrayBackedExtensionBlock instead of ExtensionBlock
+        # -> still allow ExtensionBlock to be passed in this case for back compat
+        klass = None
+
     if klass is None:
         dtype = dtype or values.dtype
-        klass = get_block_type(values, dtype)
+        klass = get_block_type(dtype)
 
     elif klass is DatetimeTZBlock and not is_datetime64tz_dtype(values.dtype):
         # pyarrow calls get here
         values = DatetimeArray._simple_new(values, dtype=dtype)
-        needs_reshape = True
 
     if not isinstance(placement, BlockPlacement):
         placement = BlockPlacement(placement)
 
     ndim = maybe_infer_ndim(values, placement, ndim)
-    if needs_reshape:
+    if is_datetime64tz_dtype(values.dtype) or is_period_dtype(values.dtype):
+        # GH#41168 ensure we can pass 1D dt64tz values
+        # More generally, any EA dtype that isn't is_1d_only_ea_dtype
+        values = extract_array(values, extract_numpy=True)
         values = ensure_block_shape(values, ndim)
 
     check_ndim(values, placement, ndim)

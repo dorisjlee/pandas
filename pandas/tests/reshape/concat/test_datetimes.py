@@ -403,6 +403,7 @@ class TestTimezoneConcat:
         expected = DataFrame({"time": [ts2, ts3]})
         tm.assert_frame_equal(results, expected)
 
+    @pytest.mark.filterwarnings("ignore:Timestamp.freq is deprecated:FutureWarning")
     def test_concat_multiindex_with_tz(self):
         # GH 6606
         df = DataFrame(
@@ -470,6 +471,14 @@ class TestTimezoneConcat:
 
         tm.assert_frame_equal(result, expected)
 
+    def test_concat_tz_with_empty(self):
+        # GH 9188
+        result = concat(
+            [DataFrame(date_range("2000", periods=1, tz="UTC")), DataFrame()]
+        )
+        expected = DataFrame(date_range("2000", periods=1, tz="UTC"))
+        tm.assert_frame_equal(result, expected)
+
 
 class TestPeriodConcat:
     def test_concat_period_series(self):
@@ -519,3 +528,16 @@ def test_concat_timedelta64_block():
     result = concat([df, df])
     tm.assert_frame_equal(result.iloc[:10], df)
     tm.assert_frame_equal(result.iloc[10:], df)
+
+
+def test_concat_multiindex_datetime_nat():
+    # GH#44900
+    left = DataFrame({"a": 1}, index=MultiIndex.from_tuples([(1, pd.NaT)]))
+    right = DataFrame(
+        {"b": 2}, index=MultiIndex.from_tuples([(1, pd.NaT), (2, pd.NaT)])
+    )
+    result = concat([left, right], axis="columns")
+    expected = DataFrame(
+        {"a": [1.0, np.nan], "b": 2}, MultiIndex.from_tuples([(1, pd.NaT), (2, pd.NaT)])
+    )
+    tm.assert_frame_equal(result, expected)

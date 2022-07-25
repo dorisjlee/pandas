@@ -18,7 +18,7 @@ from pandas.io.formats.printing import pprint_thing
 class FrozenList(PandasObject, list):
     """
     Container that doesn't allow setting item *but*
-    because it's technically non-hashable, will be used
+    because it's technically hashable, will be used
     for lookups, appropriately, etc.
     """
 
@@ -89,7 +89,8 @@ class FrozenList(PandasObject, list):
     def __reduce__(self):
         return type(self), (list(self),)
 
-    def __hash__(self):
+    # error: Signature of "__hash__" incompatible with supertype "list"
+    def __hash__(self) -> int:  # type: ignore[override]
         return hash(tuple(self))
 
     def _disabled(self, *args, **kwargs):
@@ -105,6 +106,6 @@ class FrozenList(PandasObject, list):
         return f"{type(self).__name__}({str(self)})"
 
     __setitem__ = __setslice__ = _disabled  # type: ignore[assignment]
-    __delitem__ = __delslice__ = _disabled  # type: ignore[assignment]
-    pop = append = extend = _disabled  # type: ignore[assignment]
+    __delitem__ = __delslice__ = _disabled
+    pop = append = extend = _disabled
     remove = sort = insert = _disabled  # type: ignore[assignment]

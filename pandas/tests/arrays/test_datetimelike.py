@@ -1,8 +1,6 @@
+from __future__ import annotations
+
 import re
-from typing import (
-    Type,
-    Union,
-)
 
 import numpy as np
 import pytest
@@ -12,7 +10,6 @@ from pandas._libs import (
     OutOfBoundsDatetime,
     Timestamp,
 )
-from pandas.compat import np_version_under1p18
 import pandas.util._test_decorators as td
 
 import pandas as pd
@@ -29,13 +26,14 @@ from pandas.core.arrays import (
     PeriodArray,
     TimedeltaArray,
 )
-from pandas.core.arrays.datetimes import sequence_to_dt64ns
+from pandas.core.arrays.datetimes import _sequence_to_dt64ns
 from pandas.core.arrays.timedeltas import sequence_to_td64ns
 
 
 # TODO: more freq variants
 @pytest.fixture(params=["D", "B", "W", "M", "Q", "Y"])
 def freqstr(request):
+    """Fixture returning parametrized frequency in string format."""
     return request.param
 
 
@@ -80,11 +78,12 @@ def timedelta_index():
 
 
 class SharedTests:
-    index_cls: Type[Union[DatetimeIndex, PeriodIndex, TimedeltaIndex]]
+    index_cls: type[DatetimeIndex | PeriodIndex | TimedeltaIndex]
 
     @pytest.fixture
     def arr1d(self):
-        data = np.arange(10, dtype="i8") * 24 * 3600 * 10 ** 9
+        """Fixture returning DatetimeArray with daily frequency."""
+        data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         arr = self.array_cls(data, freq="D")
         return arr
 
@@ -151,7 +150,7 @@ class SharedTests:
             tm.assert_numpy_array_equal(result, ones)
 
     def test_take(self):
-        data = np.arange(100, dtype="i8") * 24 * 3600 * 10 ** 9
+        data = np.arange(100, dtype="i8") * 24 * 3600 * 10**9
         np.random.shuffle(data)
 
         freq = None if self.array_cls is not PeriodArray else "D"
@@ -171,9 +170,9 @@ class SharedTests:
 
         tm.assert_index_equal(self.index_cls(result), expected)
 
-    @pytest.mark.parametrize("fill_value", [2, 2.0, Timestamp.now().time])
+    @pytest.mark.parametrize("fill_value", [2, 2.0, Timestamp(2021, 1, 1, 12).time])
     def test_take_fill_raises(self, fill_value):
-        data = np.arange(10, dtype="i8") * 24 * 3600 * 10 ** 9
+        data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
 
         arr = self.array_cls(data, freq="D")
 
@@ -182,7 +181,7 @@ class SharedTests:
             arr.take([0, 1], allow_fill=True, fill_value=fill_value)
 
     def test_take_fill(self):
-        data = np.arange(10, dtype="i8") * 24 * 3600 * 10 ** 9
+        data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
 
         arr = self.array_cls(data, freq="D")
 
@@ -218,7 +217,7 @@ class SharedTests:
         tm.assert_index_equal(self.index_cls(result), expected)
 
     def test_unbox_scalar(self):
-        data = np.arange(10, dtype="i8") * 24 * 3600 * 10 ** 9
+        data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         arr = self.array_cls(data, freq="D")
         result = arr._unbox_scalar(arr[0])
         expected = arr._data.dtype.type
@@ -232,7 +231,7 @@ class SharedTests:
             arr._unbox_scalar("foo")
 
     def test_check_compatible_with(self):
-        data = np.arange(10, dtype="i8") * 24 * 3600 * 10 ** 9
+        data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         arr = self.array_cls(data, freq="D")
 
         arr._check_compatible_with(arr[0])
@@ -240,22 +239,22 @@ class SharedTests:
         arr._check_compatible_with(NaT)
 
     def test_scalar_from_string(self):
-        data = np.arange(10, dtype="i8") * 24 * 3600 * 10 ** 9
+        data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         arr = self.array_cls(data, freq="D")
         result = arr._scalar_from_string(str(arr[0]))
         assert result == arr[0]
 
     def test_reduce_invalid(self):
-        data = np.arange(10, dtype="i8") * 24 * 3600 * 10 ** 9
+        data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         arr = self.array_cls(data, freq="D")
 
-        msg = f"'{type(arr).__name__}' does not implement reduction 'not a method'"
+        msg = "does not support reduction 'not a method'"
         with pytest.raises(TypeError, match=msg):
             arr._reduce("not a method")
 
     @pytest.mark.parametrize("method", ["pad", "backfill"])
     def test_fillna_method_doesnt_change_orig(self, method):
-        data = np.arange(10, dtype="i8") * 24 * 3600 * 10 ** 9
+        data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         arr = self.array_cls(data, freq="D")
         arr[4] = NaT
 
@@ -268,7 +267,7 @@ class SharedTests:
         assert arr[4] is NaT
 
     def test_searchsorted(self):
-        data = np.arange(10, dtype="i8") * 24 * 3600 * 10 ** 9
+        data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         arr = self.array_cls(data, freq="D")
 
         # scalar
@@ -290,15 +289,10 @@ class SharedTests:
         # GH#29884 match numpy convention on whether NaT goes
         #  at the end or the beginning
         result = arr.searchsorted(NaT)
-        if np_version_under1p18:
-            # Following numpy convention, NaT goes at the beginning
-            #  (unlike NaN which goes at the end)
-            assert result == 0
-        else:
-            assert result == 10
+        assert result == 10
 
     @pytest.mark.parametrize("box", [None, "index", "series"])
-    def test_searchsorted_castable_strings(self, arr1d, box, request):
+    def test_searchsorted_castable_strings(self, arr1d, box, request, string_storage):
         if isinstance(arr1d, DatetimeArray):
             tz = arr1d.tz
             ts1, ts2 = arr1d[1:3]
@@ -306,7 +300,9 @@ class SharedTests:
                 # If we have e.g. tzutc(), when we cast to string and parse
                 #  back we get pytz.UTC, and then consider them different timezones
                 #  so incorrectly raise.
-                mark = pytest.mark.xfail(reason="timezone comparisons inconsistent")
+                mark = pytest.mark.xfail(
+                    raises=TypeError, reason="timezone comparisons inconsistent"
+                )
                 request.node.add_marker(mark)
 
         arr = arr1d
@@ -339,14 +335,17 @@ class SharedTests:
         ):
             arr.searchsorted("foo")
 
-        with pytest.raises(
-            TypeError,
-            match=re.escape(
-                f"value should be a '{arr1d._scalar_type.__name__}', 'NaT', "
-                "or array of those. Got 'StringArray' instead."
-            ),
-        ):
-            arr.searchsorted([str(arr[1]), "baz"])
+        arr_type = "StringArray" if string_storage == "python" else "ArrowStringArray"
+
+        with pd.option_context("string_storage", string_storage):
+            with pytest.raises(
+                TypeError,
+                match=re.escape(
+                    f"value should be a '{arr1d._scalar_type.__name__}', 'NaT', "
+                    f"or array of those. Got '{arr_type}' instead."
+                ),
+            ):
+                arr.searchsorted([str(arr[1]), "baz"])
 
     def test_getitem_near_implementation_bounds(self):
         # We only check tz-naive for DTA bc the bounds are slightly different
@@ -418,11 +417,11 @@ class SharedTests:
         assert result == expected
 
     def test_setitem(self):
-        data = np.arange(10, dtype="i8") * 24 * 3600 * 10 ** 9
+        data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         arr = self.array_cls(data, freq="D")
 
         arr[0] = arr[1]
-        expected = np.arange(10, dtype="i8") * 24 * 3600 * 10 ** 9
+        expected = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         expected[0] = expected[1]
 
         tm.assert_numpy_array_equal(arr.asi8, expected)
@@ -471,7 +470,9 @@ class SharedTests:
                 # If we have e.g. tzutc(), when we cast to string and parse
                 #  back we get pytz.UTC, and then consider them different timezones
                 #  so incorrectly raise.
-                mark = pytest.mark.xfail(reason="timezone comparisons inconsistent")
+                mark = pytest.mark.xfail(
+                    raises=TypeError, reason="timezone comparisons inconsistent"
+                )
                 request.node.add_marker(mark)
 
         # Setting list-like of strs
@@ -505,7 +506,7 @@ class SharedTests:
         tm.assert_equal(arr1d, expected)
 
     def test_setitem_raises(self):
-        data = np.arange(10, dtype="i8") * 24 * 3600 * 10 ** 9
+        data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         arr = self.array_cls(data, freq="D")
         val = arr[0]
 
@@ -541,7 +542,7 @@ class SharedTests:
 
     def test_inplace_arithmetic(self):
         # GH#24115 check that iadd and isub are actually in-place
-        data = np.arange(10, dtype="i8") * 24 * 3600 * 10 ** 9
+        data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         arr = self.array_cls(data, freq="D")
 
         expected = arr + pd.Timedelta(days=1)
@@ -554,15 +555,16 @@ class SharedTests:
 
     def test_shift_fill_int_deprecated(self):
         # GH#31971
-        data = np.arange(10, dtype="i8") * 24 * 3600 * 10 ** 9
+        data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         arr = self.array_cls(data, freq="D")
 
-        with tm.assert_produces_warning(FutureWarning, check_stacklevel=False):
+        msg = "Passing <class 'int'> to shift"
+        with tm.assert_produces_warning(FutureWarning, match=msg):
             result = arr.shift(1, fill_value=1)
 
         expected = arr.copy()
         if self.array_cls is PeriodArray:
-            fill_val = PeriodArray._scalar_type._from_ordinal(1, freq=arr.freq)
+            fill_val = arr._scalar_type._from_ordinal(1, freq=arr.freq)
         else:
             fill_val = arr._scalar_type(1)
         expected[0] = fill_val
@@ -635,6 +637,10 @@ class TestDatetimeArray(SharedTests):
 
     @pytest.fixture
     def arr1d(self, tz_naive_fixture, freqstr):
+        """
+        Fixture returning DatetimeArray with parametrized frequency and
+        timezones
+        """
         tz = tz_naive_fixture
         dti = pd.date_range("2016-01-01 01:01:00", periods=5, freq=freqstr, tz=tz)
         dta = dti._data
@@ -779,10 +785,11 @@ class TestDatetimeArray(SharedTests):
         dti = datetime_index
         arr = DatetimeArray(dti)
 
-        with tm.assert_produces_warning(FutureWarning):
+        msg = "to_perioddelta is deprecated and will be removed"
+        with tm.assert_produces_warning(FutureWarning, match=msg):
             # Deprecation GH#34853
             expected = dti.to_perioddelta(freq=freqstr)
-        with tm.assert_produces_warning(FutureWarning, check_stacklevel=False):
+        with tm.assert_produces_warning(FutureWarning, match=msg):
             # stacklevel is chosen to be "correct" for DatetimeIndex, not
             #  DatetimeArray
             result = arr.to_perioddelta(freq=freqstr)
@@ -813,7 +820,7 @@ class TestDatetimeArray(SharedTests):
             expected = arr1d.to_period("D").reshape(1, -1)
         tm.assert_period_array_equal(result, expected)
 
-    @pytest.mark.parametrize("propname", DatetimeIndex._bool_ops)
+    @pytest.mark.parametrize("propname", DatetimeArray._bool_ops)
     def test_bool_properties(self, arr1d, propname):
         # in this case _bool_ops is just `is_leap_year`
         dti = self.index_cls(arr1d)
@@ -825,24 +832,28 @@ class TestDatetimeArray(SharedTests):
 
         tm.assert_numpy_array_equal(result, expected)
 
-    @pytest.mark.parametrize("propname", DatetimeIndex._field_ops)
+    @pytest.mark.parametrize("propname", DatetimeArray._field_ops)
     def test_int_properties(self, arr1d, propname):
+        warn = None
+        msg = "weekofyear and week have been deprecated, please use"
         if propname in ["week", "weekofyear"]:
             # GH#33595 Deprecate week and weekofyear
-            return
+            warn = FutureWarning
+
         dti = self.index_cls(arr1d)
         arr = arr1d
 
-        result = getattr(arr, propname)
-        expected = np.array(getattr(dti, propname), dtype=result.dtype)
+        with tm.assert_produces_warning(warn, match=msg):
+            result = getattr(arr, propname)
+            expected = np.array(getattr(dti, propname), dtype=result.dtype)
 
         tm.assert_numpy_array_equal(result, expected)
 
-    def test_take_fill_valid(self, arr1d):
+    def test_take_fill_valid(self, arr1d, fixed_now_ts):
         arr = arr1d
         dti = self.index_cls(arr1d)
 
-        now = Timestamp.now().tz_localize(dti.tz)
+        now = fixed_now_ts.tz_localize(dti.tz)
         result = arr.take([-1, 1], allow_fill=True, fill_value=now)
         assert result[0] == now
 
@@ -856,7 +867,7 @@ class TestDatetimeArray(SharedTests):
             arr.take([-1, 1], allow_fill=True, fill_value=Period("2014Q1"))
 
         tz = None if dti.tz is not None else "US/Eastern"
-        now = Timestamp.now().tz_localize(tz)
+        now = fixed_now_ts.tz_localize(tz)
         msg = "Cannot compare tz-naive and tz-aware datetime-like objects"
         with pytest.raises(TypeError, match=msg):
             # Timestamp with mismatched tz-awareness
@@ -876,11 +887,19 @@ class TestDatetimeArray(SharedTests):
         if arr.tz is not None:
             # GH#37356
             # Assuming here that arr1d fixture does not include Australia/Melbourne
-            value = Timestamp.now().tz_localize("Australia/Melbourne")
+            value = fixed_now_ts.tz_localize("Australia/Melbourne")
             msg = "Timezones don't match. .* != 'Australia/Melbourne'"
             with pytest.raises(ValueError, match=msg):
                 # require tz match, not just tzawareness match
-                arr.take([-1, 1], allow_fill=True, fill_value=value)
+                with tm.assert_produces_warning(
+                    FutureWarning, match="mismatched timezone"
+                ):
+                    result = arr.take([-1, 1], allow_fill=True, fill_value=value)
+
+            # once deprecation is enforced
+            # expected = arr.take([-1, 1], allow_fill=True,
+            #  fill_value=value.tz_convert(arr.dtype.tz))
+            # tm.assert_equal(result, expected)
 
     def test_concat_same_type_invalid(self, arr1d):
         # different timezones
@@ -970,7 +989,7 @@ class TestTimedeltaArray(SharedTests):
 
         tm.assert_numpy_array_equal(result, expected.values)
 
-    @pytest.mark.parametrize("propname", TimedeltaIndex._field_ops)
+    @pytest.mark.parametrize("propname", TimedeltaArray._field_ops)
     def test_int_properties(self, timedelta_index, propname):
         tdi = timedelta_index
         arr = TimedeltaArray(tdi)
@@ -1022,7 +1041,7 @@ class TestTimedeltaArray(SharedTests):
             expected = np.asarray(arr).astype(dtype)
             tm.assert_numpy_array_equal(result, expected)
 
-    def test_take_fill_valid(self, timedelta_index):
+    def test_take_fill_valid(self, timedelta_index, fixed_now_ts):
         tdi = timedelta_index
         arr = TimedeltaArray(tdi)
 
@@ -1030,14 +1049,13 @@ class TestTimedeltaArray(SharedTests):
         result = arr.take([-1, 1], allow_fill=True, fill_value=td1)
         assert result[0] == td1
 
-        now = Timestamp.now()
-        value = now
+        value = fixed_now_ts
         msg = f"value should be a '{arr._scalar_type.__name__}' or 'NaT'. Got"
         with pytest.raises(TypeError, match=msg):
             # fill_value Timestamp invalid
             arr.take([0, 1], allow_fill=True, fill_value=value)
 
-        value = now.to_period("D")
+        value = fixed_now_ts.to_period("D")
         with pytest.raises(TypeError, match=msg):
             # fill_value Period invalid
             arr.take([0, 1], allow_fill=True, fill_value=value)
@@ -1056,6 +1074,9 @@ class TestPeriodArray(SharedTests):
 
     @pytest.fixture
     def arr1d(self, period_index):
+        """
+        Fixture returning DatetimeArray from parametrized PeriodIndex objects
+        """
         return period_index._data
 
     def test_from_pi(self, arr1d):
@@ -1102,6 +1123,25 @@ class TestPeriodArray(SharedTests):
         # placeholder until these become actual EA subclasses and we can use
         #  an EA-specific tm.assert_ function
         tm.assert_index_equal(pd.Index(result), pd.Index(expected))
+
+    def test_to_timestamp_roundtrip_bday(self):
+        # Case where infer_freq inside would choose "D" instead of "B"
+        dta = pd.date_range("2021-10-18", periods=3, freq="B")._data
+        parr = dta.to_period()
+        result = parr.to_timestamp()
+        assert result.freq == "B"
+        tm.assert_extension_array_equal(result, dta)
+
+        dta2 = dta[::2]
+        parr2 = dta2.to_period()
+        result2 = parr2.to_timestamp()
+        assert result2.freq == "2B"
+        tm.assert_extension_array_equal(result2, dta2)
+
+        parr3 = dta.to_period("2B")
+        result3 = parr3.to_timestamp()
+        assert result3.freq == "B"
+        tm.assert_extension_array_equal(result3, dta)
 
     def test_to_timestamp_out_of_bounds(self):
         # GH#19643 previously overflowed silently
@@ -1150,7 +1190,7 @@ class TestPeriodArray(SharedTests):
         tm.assert_numpy_array_equal(result, arr.asi8)
 
         # to other dtypes
-        msg = r"float\(\) argument must be a string or a number, not 'Period'"
+        msg = r"float\(\) argument must be a string or a( real)? number, not 'Period'"
         with pytest.raises(TypeError, match=msg):
             np.asarray(arr, dtype="float64")
 
@@ -1235,17 +1275,11 @@ def test_invalid_nat_setitem_array(arr, non_casting_nats):
     ],
 )
 def test_to_numpy_extra(arr):
-    if np_version_under1p18:
-        # np.isnan(NaT) raises, so use pandas'
-        isnan = pd.isna
-    else:
-        isnan = np.isnan
-
     arr[0] = NaT
     original = arr.copy()
 
     result = arr.to_numpy()
-    assert isnan(result[0])
+    assert np.isnan(result[0])
 
     result = arr.to_numpy(dtype="int64")
     assert result[0] == -9223372036854775808
@@ -1338,7 +1372,7 @@ def test_from_pandas_array(dtype):
     expected = cls._from_sequence(data)
     tm.assert_extension_array_equal(result, expected)
 
-    func = {"M8[ns]": sequence_to_dt64ns, "m8[ns]": sequence_to_td64ns}[dtype]
+    func = {"M8[ns]": _sequence_to_dt64ns, "m8[ns]": sequence_to_td64ns}[dtype]
     result = func(arr)[0]
     expected = func(data)[0]
     tm.assert_equal(result, expected)
@@ -1364,6 +1398,10 @@ def test_from_pandas_array(dtype):
     ]
 )
 def array_likes(request):
+    """
+    Fixture giving a numpy array and a parametrized 'data' object, which can
+    be a memoryview, array, dask or xarray object created from the numpy array.
+    """
     # GH#24539 recognize e.g xarray, dask, ...
     arr = np.array([1, 2, 3], dtype=np.int64)
 
@@ -1401,16 +1439,18 @@ def test_from_obscure_array(dtype, array_likes):
     result = cls._from_sequence(data)
     tm.assert_extension_array_equal(result, expected)
 
-    func = {"M8[ns]": sequence_to_dt64ns, "m8[ns]": sequence_to_td64ns}[dtype]
+    func = {"M8[ns]": _sequence_to_dt64ns, "m8[ns]": sequence_to_td64ns}[dtype]
     result = func(arr)[0]
     expected = func(data)[0]
     tm.assert_equal(result, expected)
 
-    # FIXME: dask and memoryview both break on these
-    # func = {"M8[ns]": pd.to_datetime, "m8[ns]": pd.to_timedelta}[dtype]
-    # result = func(arr).array
-    # expected = func(data).array
-    # tm.assert_equal(result, expected)
+    if not isinstance(data, memoryview):
+        # FIXME(GH#44431) these raise on memoryview and attempted fix
+        #  fails on py3.10
+        func = {"M8[ns]": pd.to_datetime, "m8[ns]": pd.to_timedelta}[dtype]
+        result = func(arr).array
+        expected = func(data).array
+        tm.assert_equal(result, expected)
 
     # Let's check the Indexes while we're here
     idx_cls = {"M8[ns]": DatetimeIndex, "m8[ns]": TimedeltaIndex}[dtype]

@@ -1,10 +1,7 @@
 """
 Templating for ops docstrings
 """
-from typing import (
-    Dict,
-    Optional,
-)
+from __future__ import annotations
 
 
 def make_flex_doc(op_name: str, typ: str) -> str:
@@ -297,7 +294,7 @@ _returns_series = """Series\n    The result of the operation."""
 
 _returns_tuple = """2-Tuple of Series\n    The result of the operation."""
 
-_op_descriptions: Dict[str, Dict[str, Optional[str]]] = {
+_op_descriptions: dict[str, dict[str, str | None]] = {
     # Arithmetic Operators
     "add": {
         "op": "+",
@@ -431,14 +428,16 @@ missing data in either one of the inputs.
 Parameters
 ----------
 other : Series or scalar value
+level : int or name
+    Broadcast across a level, matching Index values on the
+    passed MultiIndex level.
 fill_value : None or float value, default None (NaN)
     Fill existing missing (NaN) values, and any new element needed for
     successful Series alignment, with this value before computation.
     If data in both corresponding Series locations is missing
     the result of filling (at that location) will be missing.
-level : int or name
-    Broadcast across a level, matching Index values on the
-    passed MultiIndex level.
+axis : {{0 or 'index'}}
+    Unused. Parameter needed for compatibility with DataFrame.
 
 Returns
 -------
@@ -465,7 +464,7 @@ Parameters
 other : scalar, sequence, Series, or DataFrame
     Any single or multiple element data structure, or list-like object.
 axis : {{0 or 'index', 1 or 'columns'}}
-    Whether to compare by the index (0 or 'index') or columns
+    Whether to compare by the index (0 or 'index') or columns.
     (1 or 'columns'). For Series input, axis to match Series index on.
 level : int or label
     Broadcast across a level, matching Index values on the

@@ -3,6 +3,8 @@ import re
 import numpy as np
 import pytest
 
+from pandas.errors import SettingWithCopyError
+
 from pandas import (
     DataFrame,
     Index,
@@ -12,7 +14,6 @@ from pandas import (
     concat,
 )
 import pandas._testing as tm
-import pandas.core.common as com
 
 from pandas.tseries.offsets import BDay
 
@@ -106,7 +107,8 @@ class TestXS:
         expected = df[:1]
         tm.assert_frame_equal(result, expected)
 
-        result = df.xs([2008, "sat"], level=["year", "day"], drop_level=False)
+        with tm.assert_produces_warning(FutureWarning):
+            result = df.xs([2008, "sat"], level=["year", "day"], drop_level=False)
         tm.assert_frame_equal(result, expected)
 
     def test_xs_view(self, using_array_manager):
@@ -119,7 +121,7 @@ class TestXS:
             # INFO(ArrayManager) with ArrayManager getting a row as a view is
             # not possible
             msg = r"\nA value is trying to be set on a copy of a slice from a DataFrame"
-            with pytest.raises(com.SettingWithCopyError, match=msg):
+            with pytest.raises(SettingWithCopyError, match=msg):
                 dm.xs(2)[:] = 20
             assert not (dm.xs(2) == 20).any()
         else:
@@ -128,6 +130,23 @@ class TestXS:
 
 
 class TestXSWithMultiIndex:
+    def test_xs_doc_example(self):
+        # TODO: more descriptive name
+        # based on example in advanced.rst
+        arrays = [
+            ["bar", "bar", "baz", "baz", "foo", "foo", "qux", "qux"],
+            ["one", "two", "one", "two", "one", "two", "one", "two"],
+        ]
+        tuples = list(zip(*arrays))
+
+        index = MultiIndex.from_tuples(tuples, names=["first", "second"])
+        df = DataFrame(np.random.randn(3, 8), index=["A", "B", "C"], columns=index)
+
+        result = df.xs(("one", "bar"), level=("second", "first"), axis=1)
+
+        expected = df.iloc[:, [0]]
+        tm.assert_frame_equal(result, expected)
+
     def test_xs_integer_key(self):
         # see GH#2107
         dates = range(20111201, 20111205)
@@ -165,7 +184,7 @@ class TestXSWithMultiIndex:
         # setting this will give a SettingWithCopyError
         # as we are trying to write a view
         msg = "A value is trying to be set on a copy of a slice from a DataFrame"
-        with pytest.raises(com.SettingWithCopyError, match=msg):
+        with pytest.raises(SettingWithCopyError, match=msg):
             result[:] = 10
 
     def test_xs_setting_with_copy_error_multiple(self, four_level_index_dataframe):
@@ -176,7 +195,7 @@ class TestXSWithMultiIndex:
         # setting this will give a SettingWithCopyError
         # as we are trying to write a view
         msg = "A value is trying to be set on a copy of a slice from a DataFrame"
-        with pytest.raises(com.SettingWithCopyError, match=msg):
+        with pytest.raises(SettingWithCopyError, match=msg):
             result[:] = 10
 
     @pytest.mark.parametrize("key, level", [("one", "second"), (["one"], ["second"])])
@@ -187,7 +206,11 @@ class TestXSWithMultiIndex:
         assert df.index.is_unique is False
         expected = concat([frame.xs("one", level="second")] * 2)
 
-        result = df.xs(key, level=level)
+        if isinstance(key, list):
+            with tm.assert_produces_warning(FutureWarning):
+                result = df.xs(key, level=level)
+        else:
+            result = df.xs(key, level=level)
         tm.assert_frame_equal(result, expected)
 
     def test_xs_missing_values_in_index(self):
@@ -296,12 +319,13 @@ class TestXSWithMultiIndex:
         if klass is Series:
             obj = obj[0]
 
-        msg = (
-            "Expected label or tuple of labels, got "
-            r"\(\('foo', 'qux', 0\), slice\(None, None, None\)\)"
-        )
-        with pytest.raises(TypeError, match=msg):
-            obj.xs(IndexSlice[("foo", "qux", 0), :])
+        expected = obj.iloc[-2:].droplevel(0)
+
+        result = obj.xs(IndexSlice[("foo", "qux", 0), :])
+        tm.assert_equal(result, expected)
+
+        result = obj.loc[IndexSlice[("foo", "qux", 0), :]]
+        tm.assert_equal(result, expected)
 
     @pytest.mark.parametrize("klass", [DataFrame, Series])
     def test_xs_levels_raises(self, klass):
@@ -343,12 +367,7 @@ class TestXSWithMultiIndex:
         assert np.shares_memory(result.iloc[:, 0]._values, df.iloc[:, 0]._values)
         # modifying original df also modifies result when having a single block
         df.iloc[0, 0] = 2
-        if not using_array_manager:
-            expected = DataFrame({"a": [2]})
-        else:
-            # TODO(ArrayManager) iloc does not update the array inplace using
-            # "split" path
-            expected = DataFrame({"a": [1]})
+        expected = DataFrame({"a": [2]})
         tm.assert_frame_equal(result, expected)
 
         # with mixed dataframe, modifying the parent doesn't modify result
@@ -356,5 +375,19 @@ class TestXSWithMultiIndex:
         df = DataFrame([[1, 2.5, "a"]], columns=Index(["a", "b", "c"]))
         result = df.xs("a", axis=1, drop_level=False)
         df.iloc[0, 0] = 2
-        expected = DataFrame({"a": [1]})
+        if using_array_manager:
+            # Here the behavior is consistent
+            expected = DataFrame({"a": [2]})
+        else:
+            # FIXME: iloc does not update the array inplace using
+            # "split" path
+            expected = DataFrame({"a": [1]})
         tm.assert_frame_equal(result, expected)
+
+    def test_xs_list_indexer_droplevel_false(self):
+        # GH#41760
+        mi = MultiIndex.from_tuples([("x", "m", "a"), ("x", "n", "b"), ("y", "o", "c")])
+        df = DataFrame([[1, 2, 3], [4, 5, 6]], columns=mi)
+        with tm.assert_produces_warning(FutureWarning):
+            with pytest.raises(KeyError, match="y"):
+                df.xs(["x", "y"], drop_level=False, axis=1)

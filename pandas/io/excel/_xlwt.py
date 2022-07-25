@@ -1,38 +1,50 @@
+from __future__ import annotations
+
 from typing import (
     TYPE_CHECKING,
     Any,
-    Dict,
-    Optional,
+    Tuple,
+    cast,
 )
 
 import pandas._libs.json as json
-from pandas._typing import StorageOptions
+from pandas._typing import (
+    FilePath,
+    StorageOptions,
+    WriteExcelBuffer,
+)
 
 from pandas.io.excel._base import ExcelWriter
-from pandas.io.excel._util import validate_freeze_panes
+from pandas.io.excel._util import (
+    combine_kwargs,
+    validate_freeze_panes,
+)
 
 if TYPE_CHECKING:
     from xlwt import XFStyle
 
 
 class XlwtWriter(ExcelWriter):
-    engine = "xlwt"
-    supported_extensions = (".xls",)
+    _engine = "xlwt"
+    _supported_extensions = (".xls",)
 
     def __init__(
         self,
-        path,
-        engine=None,
-        date_format=None,
-        datetime_format=None,
-        encoding=None,
+        path: FilePath | WriteExcelBuffer | ExcelWriter,
+        engine: str | None = None,
+        date_format: str | None = None,
+        datetime_format: str | None = None,
+        encoding: str | None = None,
         mode: str = "w",
         storage_options: StorageOptions = None,
-        if_sheet_exists: Optional[str] = None,
-        engine_kwargs: Optional[Dict[str, Any]] = None,
-    ):
+        if_sheet_exists: str | None = None,
+        engine_kwargs: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> None:
         # Use the xlwt module as the Excel writer.
         import xlwt
+
+        engine_kwargs = combine_kwargs(engine_kwargs, kwargs)
 
         if mode == "a":
             raise ValueError("Append mode is not supported with xlwt!")
@@ -47,21 +59,57 @@ class XlwtWriter(ExcelWriter):
 
         if encoding is None:
             encoding = "ascii"
-        self.book = xlwt.Workbook(encoding=encoding)
-        self.fm_datetime = xlwt.easyxf(num_format_str=self.datetime_format)
-        self.fm_date = xlwt.easyxf(num_format_str=self.date_format)
+        self._book = xlwt.Workbook(encoding=encoding, **engine_kwargs)
+        self._fm_datetime = xlwt.easyxf(num_format_str=self._datetime_format)
+        self._fm_date = xlwt.easyxf(num_format_str=self._date_format)
 
-    def save(self):
+    @property
+    def book(self):
+        """
+        Book instance of class xlwt.Workbook.
+
+        This attribute can be used to access engine-specific features.
+        """
+        return self._book
+
+    @property
+    def sheets(self) -> dict[str, Any]:
+        """Mapping of sheet names to sheet objects."""
+        result = {sheet.name: sheet for sheet in self.book._Workbook__worksheets}
+        return result
+
+    @property
+    def fm_date(self):
+        """
+        XFStyle formatter for dates.
+        """
+        self._deprecate("fm_date")
+        return self._fm_date
+
+    @property
+    def fm_datetime(self):
+        """
+        XFStyle formatter for dates.
+        """
+        self._deprecate("fm_datetime")
+        return self._fm_datetime
+
+    def _save(self) -> None:
         """
         Save workbook to disk.
         """
         if self.sheets:
             # fails when the ExcelWriter is just opened and then closed
-            self.book.save(self.handles.handle)
+            self.book.save(self._handles.handle)
 
-    def write_cells(
-        self, cells, sheet_name=None, startrow=0, startcol=0, freeze_panes=None
-    ):
+    def _write_cells(
+        self,
+        cells,
+        sheet_name: str | None = None,
+        startrow: int = 0,
+        startcol: int = 0,
+        freeze_panes: tuple[int, int] | None = None,
+    ) -> None:
 
         sheet_name = self._get_sheet_name(sheet_name)
 
@@ -72,11 +120,12 @@ class XlwtWriter(ExcelWriter):
             self.sheets[sheet_name] = wks
 
         if validate_freeze_panes(freeze_panes):
+            freeze_panes = cast(Tuple[int, int], freeze_panes)
             wks.set_panes_frozen(True)
             wks.set_horz_split_pos(freeze_panes[0])
             wks.set_vert_split_pos(freeze_panes[1])
 
-        style_dict: Dict[str, XFStyle] = {}
+        style_dict: dict[str, XFStyle] = {}
 
         for cell in cells:
             val, fmt = self._value_with_fmt(cell.val)
@@ -105,7 +154,7 @@ class XlwtWriter(ExcelWriter):
 
     @classmethod
     def _style_to_xlwt(
-        cls, item, firstlevel: bool = True, field_sep=",", line_sep=";"
+        cls, item, firstlevel: bool = True, field_sep: str = ",", line_sep: str = ";"
     ) -> str:
         """
         helper which recursively generate an xlwt easy style string
@@ -144,7 +193,9 @@ class XlwtWriter(ExcelWriter):
             return item
 
     @classmethod
-    def _convert_to_style(cls, style_dict, num_format_str=None):
+    def _convert_to_style(
+        cls, style_dict, num_format_str: str | None = None
+    ) -> XFStyle:
         """
         converts a style_dict to an xlwt style object
 

@@ -47,15 +47,12 @@ class TestPandasDelegate:
         foo = property(_get_foo, _set_foo, doc="foo property")
 
         def bar(self, *args, **kwargs):
-            """ a test bar method """
+            """a test bar method"""
             pass
 
     class Delegate(PandasDelegate, PandasObject):
-        def __init__(self, obj):
+        def __init__(self, obj) -> None:
             self.obj = obj
-
-    def setup_method(self, method):
-        pass
 
     def test_invalid_delegation(self):
         # these show that in order for the delegation to work

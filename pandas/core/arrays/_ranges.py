@@ -2,11 +2,11 @@
 Helper functions to generate range-like data for DatetimeArray
 (and possibly TimedeltaArray/PeriodArray)
 """
-
-from typing import Union
+from __future__ import annotations
 
 import numpy as np
 
+from pandas._libs.lib import i8max
 from pandas._libs.tslibs import (
     BaseOffset,
     OutOfBoundsDatetime,
@@ -14,14 +14,15 @@ from pandas._libs.tslibs import (
     Timestamp,
     iNaT,
 )
+from pandas._typing import npt
 
 
 def generate_regular_range(
-    start: Union[Timestamp, Timedelta],
-    end: Union[Timestamp, Timedelta],
-    periods: int,
+    start: Timestamp | Timedelta | None,
+    end: Timestamp | Timedelta | None,
+    periods: int | None,
     freq: BaseOffset,
-):
+) -> npt.NDArray[np.intp]:
     """
     Generate a range of dates or timestamps with the spans between dates
     described by the given `freq` DateOffset.
@@ -32,7 +33,7 @@ def generate_regular_range(
         First point of produced date range.
     end : Timedelta, Timestamp or None
         Last point of produced date range.
-    periods : int
+    periods : int or None
         Number of periods in produced date range.
     freq : Tick
         Describes space between dates in produced date range.
@@ -45,15 +46,15 @@ def generate_regular_range(
     iend = end.value if end is not None else None
     stride = freq.nanos
 
-    if periods is None:
+    if periods is None and istart is not None and iend is not None:
         b = istart
         # cannot just use e = Timestamp(end) + 1 because arange breaks when
         # stride is too large, see GH10887
         e = b + (iend - b) // stride * stride + stride // 2 + 1
-    elif istart is not None:
+    elif istart is not None and periods is not None:
         b = istart
         e = _generate_range_overflow_safe(b, periods, stride, side="start")
-    elif iend is not None:
+    elif iend is not None and periods is not None:
         e = iend + stride
         b = _generate_range_overflow_safe(e, periods, stride, side="end")
     else:
@@ -104,7 +105,7 @@ def _generate_range_overflow_safe(
     # GH#14187 raise instead of incorrectly wrapping around
     assert side in ["start", "end"]
 
-    i64max = np.uint64(np.iinfo(np.int64).max)
+    i64max = np.uint64(i8max)
     msg = f"Cannot generate range with {side}={endpoint} and periods={periods}"
 
     with np.errstate(over="raise"):
@@ -181,7 +182,7 @@ def _generate_range_overflow_safe_signed(
             # error: Incompatible types in assignment (expression has type
             # "unsignedinteger[_64Bit]", variable has type "signedinteger[_64Bit]")
             result = np.uint64(endpoint) + np.uint64(addend)  # type: ignore[assignment]
-            i64max = np.uint64(np.iinfo(np.int64).max)
+            i64max = np.uint64(i8max)
             assert result > i64max
             if result <= i64max + np.uint64(stride):
                 # error: Incompatible return value type (got "unsignedinteger", expected

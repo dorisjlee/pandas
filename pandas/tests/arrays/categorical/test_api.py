@@ -12,7 +12,6 @@ from pandas import (
 )
 import pandas._testing as tm
 from pandas.core.arrays.categorical import recode_for_categories
-from pandas.tests.arrays.categorical.common import TestCategorical
 
 
 class TestCategoricalAPI:
@@ -82,7 +81,10 @@ class TestCategoricalAPI:
         tm.assert_categorical_equal(result, expected)
 
         # and now inplace
-        res = cat.rename_categories([1, 2, 3], inplace=True)
+        with tm.assert_produces_warning(FutureWarning):
+            # issue #37643 inplace kwarg deprecated
+            res = cat.rename_categories([1, 2, 3], inplace=True)
+
         assert res is None
         tm.assert_numpy_array_equal(
             cat.__array__(), np.array([1, 2, 3, 1], dtype=np.int64)
@@ -114,7 +116,10 @@ class TestCategoricalAPI:
         tm.assert_index_equal(res.categories, expected)
 
         # Test for inplace
-        res = cat.rename_categories({"a": 4, "b": 3, "c": 2, "d": 1}, inplace=True)
+        with tm.assert_produces_warning(FutureWarning):
+            # issue #37643 inplace kwarg deprecated
+            res = cat.rename_categories({"a": 4, "b": 3, "c": 2, "d": 1}, inplace=True)
+
         assert res is None
         tm.assert_index_equal(cat.categories, expected)
 
@@ -223,7 +228,10 @@ class TestCategoricalAPI:
         exp_categories = Index(["c", "b", "a"])
         exp_values = np.array(["a", "b", "c", "a"], dtype=np.object_)
 
-        res = cat.set_categories(["c", "b", "a"], inplace=True)
+        with tm.assert_produces_warning(FutureWarning):
+            # issue #37643 inplace kwarg deprecated
+            res = cat.set_categories(["c", "b", "a"], inplace=True)
+
         tm.assert_index_equal(cat.categories, exp_categories)
         tm.assert_numpy_array_equal(cat.__array__(), exp_values)
         assert res is None
@@ -418,13 +426,13 @@ class TestCategoricalAPI:
         assert out.tolist() == val.tolist()
 
 
-class TestCategoricalAPIWithFactor(TestCategorical):
-    def test_describe(self):
+class TestCategoricalAPIWithFactor:
+    def test_describe(self, factor):
         # string type
-        desc = self.factor.describe()
-        assert self.factor.ordered
+        desc = factor.describe()
+        assert factor.ordered
         exp_index = CategoricalIndex(
-            ["a", "b", "c"], name="categories", ordered=self.factor.ordered
+            ["a", "b", "c"], name="categories", ordered=factor.ordered
         )
         expected = DataFrame(
             {"counts": [3, 2, 3], "freqs": [3 / 8.0, 2 / 8.0, 3 / 8.0]}, index=exp_index
@@ -432,12 +440,16 @@ class TestCategoricalAPIWithFactor(TestCategorical):
         tm.assert_frame_equal(desc, expected)
 
         # check unused categories
-        cat = self.factor.copy()
-        cat.set_categories(["a", "b", "c", "d"], inplace=True)
+        cat = factor.copy()
+
+        with tm.assert_produces_warning(FutureWarning):
+            # issue #37643 inplace kwarg deprecated
+            cat.set_categories(["a", "b", "c", "d"], inplace=True)
+
         desc = cat.describe()
 
         exp_index = CategoricalIndex(
-            list("abcd"), ordered=self.factor.ordered, name="categories"
+            list("abcd"), ordered=factor.ordered, name="categories"
         )
         expected = DataFrame(
             {"counts": [3, 2, 3, 0], "freqs": [3 / 8.0, 2 / 8.0, 3 / 8.0, 0]},
@@ -467,10 +479,23 @@ class TestCategoricalAPIWithFactor(TestCategorical):
         )
         tm.assert_frame_equal(desc, expected)
 
-    def test_set_categories_inplace(self):
-        cat = self.factor.copy()
-        cat.set_categories(["a", "b", "c", "d"], inplace=True)
+    def test_set_categories_inplace(self, factor):
+        cat = factor.copy()
+
+        with tm.assert_produces_warning(FutureWarning):
+            # issue #37643 inplace kwarg deprecated
+            cat.set_categories(["a", "b", "c", "d"], inplace=True)
+
         tm.assert_index_equal(cat.categories, Index(["a", "b", "c", "d"]))
+
+    def test_codes_setter_deprecated(self):
+        cat = Categorical([1, 2, 3, 1, 2, 3, 3, 2, 1, 1, 1])
+        new_codes = cat._codes + 1
+        with tm.assert_produces_warning(FutureWarning):
+            # GH#40606
+            cat._codes = new_codes
+
+        assert cat._codes is new_codes
 
 
 class TestPrivateCategoricalAPI:

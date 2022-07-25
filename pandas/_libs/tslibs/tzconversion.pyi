@@ -2,24 +2,20 @@ from datetime import (
     timedelta,
     tzinfo,
 )
-from typing import (
-    Iterable,
-    Optional,
-    Union,
-)
+from typing import Iterable
 
 import numpy as np
 
-def tz_convert_from_utc(
-    vals: np.ndarray,  # const int64_t[:]
-    tz: tzinfo,
-) -> np.ndarray: ...  # np.ndarray[np.int64]
+from pandas._typing import npt
 
-def tz_convert_from_utc_single(val: np.int64, tz: tzinfo) -> np.int64: ...
-
+# tz_convert_from_utc_single exposed for testing
+def tz_convert_from_utc_single(
+    val: np.int64, tz: tzinfo, reso: int = ...
+) -> np.int64: ...
 def tz_localize_to_utc(
-    vals: np.ndarray,  # np.ndarray[np.int64]
-    tz: Optional[tzinfo],
-    ambiguous: Optional[Union[str, bool, Iterable[bool]]] = None,
-    nonexistent: Optional[Union[str, timedelta, np.timedelta64]] = None,
-) -> np.ndarray: ...  # np.ndarray[np.int64]
+    vals: npt.NDArray[np.int64],
+    tz: tzinfo | None,
+    ambiguous: str | bool | Iterable[bool] | None = ...,
+    nonexistent: str | timedelta | np.timedelta64 | None = ...,
+    reso: int = ...,  # NPY_DATETIMEUNIT
+) -> npt.NDArray[np.int64]: ...

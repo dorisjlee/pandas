@@ -1,14 +1,10 @@
 import pytest
 
-import pandas.util._test_decorators as td
-
 import pandas as pd
 import pandas._testing as tm
 from pandas.tests.io.pytables.common import ensure_clean_path
 
 tables = pytest.importorskip("tables")
-
-pytestmark = td.skip_array_manager_not_yet_implemented
 
 
 @pytest.fixture
@@ -27,7 +23,7 @@ def pytables_hdf5_file():
     testsamples = [
         {"c0": t0, "c1": "aaaaa", "c2": 1},
         {"c0": t0 + 1, "c1": "bbbbb", "c2": 2},
-        {"c0": t0 + 2, "c1": "ccccc", "c2": 10 ** 5},
+        {"c0": t0 + 2, "c1": "ccccc", "c2": 10**5},
         {"c0": t0 + 3, "c1": "ddddd", "c2": 4_294_967_295},
     ]
 

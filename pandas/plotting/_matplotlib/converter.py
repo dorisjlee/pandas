@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import contextlib
 import datetime as pydt
 from datetime import (
@@ -8,10 +10,7 @@ from datetime import (
 import functools
 from typing import (
     Any,
-    Dict,
-    List,
-    Optional,
-    Tuple,
+    cast,
 )
 
 from dateutil.relativedelta import relativedelta
@@ -32,6 +31,7 @@ from pandas._libs.tslibs import (
 )
 from pandas._libs.tslibs.dtypes import FreqGroup
 from pandas._libs.tslibs.offsets import BaseOffset
+from pandas._typing import F
 
 from pandas.core.dtypes.common import (
     is_float,
@@ -63,7 +63,7 @@ SEC_PER_MIN = 60.0
 SEC_PER_HOUR = SEC_PER_MIN * MIN_PER_HOUR
 SEC_PER_DAY = SEC_PER_HOUR * HOURS_PER_DAY
 
-MUSEC_PER_DAY = 10 ** 6 * SEC_PER_DAY
+MUSEC_PER_DAY = 10**6 * SEC_PER_DAY
 
 _mpl_units = {}  # Cache for units overwritten by us
 
@@ -80,7 +80,7 @@ def get_pairs():
     return pairs
 
 
-def register_pandas_matplotlib_converters(func):
+def register_pandas_matplotlib_converters(func: F) -> F:
     """
     Decorator applying pandas_converters.
     """
@@ -90,7 +90,7 @@ def register_pandas_matplotlib_converters(func):
         with pandas_converters():
             return func(*args, **kwargs)
 
-    return wrapper
+    return cast(F, wrapper)
 
 
 @contextlib.contextmanager
@@ -141,7 +141,7 @@ def deregister():
 
 
 def _to_ordinalf(tm: pydt.time) -> float:
-    tot_sec = tm.hour * 3600 + tm.minute * 60 + tm.second + tm.microsecond / 10 ** 6
+    tot_sec = tm.hour * 3600 + tm.minute * 60 + tm.second + tm.microsecond / 10**6
     return tot_sec
 
 
@@ -169,7 +169,7 @@ class TimeConverter(units.ConversionInterface):
         return value
 
     @staticmethod
-    def axisinfo(unit, axis) -> Optional[units.AxisInfo]:
+    def axisinfo(unit, axis) -> units.AxisInfo | None:
         if unit != "time":
             return None
 
@@ -184,7 +184,7 @@ class TimeConverter(units.ConversionInterface):
 
 # time formatter
 class TimeFormatter(Formatter):
-    def __init__(self, locs):
+    def __init__(self, locs) -> None:
         self.locs = locs
 
     def __call__(self, x, pos=0) -> str:
@@ -207,7 +207,7 @@ class TimeFormatter(Formatter):
         """
         fmt = "%H:%M:%S.%f"
         s = int(x)
-        msus = round((x - s) * 10 ** 6)
+        msus = round((x - s) * 10**6)
         ms = msus // 1000
         us = msus % 1000
         m, s = divmod(s, 60)
@@ -319,7 +319,7 @@ class DatetimeConverter(dates.DateConverter):
         return values
 
     @staticmethod
-    def axisinfo(unit: Optional[tzinfo], axis) -> units.AxisInfo:
+    def axisinfo(unit: tzinfo | None, axis) -> units.AxisInfo:
         """
         Return the :class:`~matplotlib.units.AxisInfo` for *unit*.
 
@@ -339,7 +339,7 @@ class DatetimeConverter(dates.DateConverter):
 
 
 class PandasAutoDateFormatter(dates.AutoDateFormatter):
-    def __init__(self, locator, tz=None, defaultfmt="%Y-%m-%d"):
+    def __init__(self, locator, tz=None, defaultfmt="%Y-%m-%d") -> None:
         dates.AutoDateFormatter.__init__(self, locator, tz, defaultfmt)
 
 
@@ -357,8 +357,8 @@ class PandasAutoDateLocator(dates.AutoDateLocator):
             locator = MilliSecondLocator(self.tz)
             locator.set_axis(self.axis)
 
-            locator.set_view_interval(*self.axis.get_view_interval())
-            locator.set_data_interval(*self.axis.get_data_interval())
+            locator.axis.set_view_interval(*self.axis.get_view_interval())
+            locator.axis.set_data_interval(*self.axis.get_data_interval())
             return locator
 
         return dates.AutoDateLocator.get_locator(self, dmin, dmax)
@@ -371,7 +371,7 @@ class MilliSecondLocator(dates.DateLocator):
 
     UNIT = 1.0 / (24 * 3600 * 1000)
 
-    def __init__(self, tz):
+    def __init__(self, tz) -> None:
         dates.DateLocator.__init__(self, tz)
         self._interval = 1.0
 
@@ -447,7 +447,7 @@ class MilliSecondLocator(dates.DateLocator):
         return self.nonsingular(vmin, vmax)
 
 
-def _from_ordinal(x, tz: Optional[tzinfo] = None) -> datetime:
+def _from_ordinal(x, tz: tzinfo | None = None) -> datetime:
     ix = int(x)
     dt = datetime.fromordinal(ix)
     remainder = float(x) - ix
@@ -476,7 +476,7 @@ def _from_ordinal(x, tz: Optional[tzinfo] = None) -> datetime:
 # -------------------------------------------------------------------------
 
 
-def _get_default_annual_spacing(nyears) -> Tuple[int, int]:
+def _get_default_annual_spacing(nyears) -> tuple[int, int]:
     """
     Returns a default spacing between consecutive ticks for annual data.
     """
@@ -531,35 +531,37 @@ def has_level_label(label_flags: np.ndarray, vmin: float) -> bool:
 
 
 def _daily_finder(vmin, vmax, freq: BaseOffset):
-    dtype_code = freq._period_dtype_code
+    # error: "BaseOffset" has no attribute "_period_dtype_code"
+    dtype_code = freq._period_dtype_code  # type: ignore[attr-defined]
+    freq_group = FreqGroup.from_period_dtype_code(dtype_code)
 
     periodsperday = -1
 
     if dtype_code >= FreqGroup.FR_HR.value:
-        if dtype_code == FreqGroup.FR_NS.value:
+        if freq_group == FreqGroup.FR_NS:
             periodsperday = 24 * 60 * 60 * 1000000000
-        elif dtype_code == FreqGroup.FR_US.value:
+        elif freq_group == FreqGroup.FR_US:
             periodsperday = 24 * 60 * 60 * 1000000
-        elif dtype_code == FreqGroup.FR_MS.value:
+        elif freq_group == FreqGroup.FR_MS:
             periodsperday = 24 * 60 * 60 * 1000
-        elif dtype_code == FreqGroup.FR_SEC.value:
+        elif freq_group == FreqGroup.FR_SEC:
             periodsperday = 24 * 60 * 60
-        elif dtype_code == FreqGroup.FR_MIN.value:
+        elif freq_group == FreqGroup.FR_MIN:
             periodsperday = 24 * 60
-        elif dtype_code == FreqGroup.FR_HR.value:
+        elif freq_group == FreqGroup.FR_HR:
             periodsperday = 24
         else:  # pragma: no cover
             raise ValueError(f"unexpected frequency: {dtype_code}")
         periodsperyear = 365 * periodsperday
         periodspermonth = 28 * periodsperday
 
-    elif dtype_code == FreqGroup.FR_BUS.value:
+    elif freq_group == FreqGroup.FR_BUS:
         periodsperyear = 261
         periodspermonth = 19
-    elif dtype_code == FreqGroup.FR_DAY.value:
+    elif freq_group == FreqGroup.FR_DAY:
         periodsperyear = 365
         periodspermonth = 28
-    elif FreqGroup.get_freq_group(dtype_code) == FreqGroup.FR_WK:
+    elif freq_group == FreqGroup.FR_WK:
         periodsperyear = 52
         periodspermonth = 3
     else:  # pragma: no cover
@@ -572,6 +574,8 @@ def _daily_finder(vmin, vmax, freq: BaseOffset):
         Period(ordinal=int(vmin), freq=freq),
         Period(ordinal=int(vmax), freq=freq),
     )
+    assert isinstance(vmin, Period)
+    assert isinstance(vmax, Period)
     span = vmax.ordinal - vmin.ordinal + 1
     dates_ = period_range(start=vmin, end=vmax, freq=freq)
     # Initialize the output
@@ -863,7 +867,8 @@ def _quarterly_finder(vmin, vmax, freq):
         info_fmt[year_start] = "%F"
 
     else:
-        years = dates_[year_start] // 4 + 1
+        # https://github.com/pandas-dev/pandas/pull/47602
+        years = dates_[year_start] // 4 + 1970
         nyears = span / periodsperyear
         (min_anndef, maj_anndef) = _get_default_annual_spacing(nyears)
         major_idx = year_start[(years % maj_anndef == 0)]
@@ -895,15 +900,15 @@ def _annual_finder(vmin, vmax, freq):
 
 
 def get_finder(freq: BaseOffset):
-    dtype_code = freq._period_dtype_code
-    fgroup = (dtype_code // 1000) * 1000
-    fgroup = FreqGroup(fgroup)
+    # error: "BaseOffset" has no attribute "_period_dtype_code"
+    dtype_code = freq._period_dtype_code  # type: ignore[attr-defined]
+    fgroup = FreqGroup.from_period_dtype_code(dtype_code)
 
     if fgroup == FreqGroup.FR_ANN:
         return _annual_finder
     elif fgroup == FreqGroup.FR_QTR:
         return _quarterly_finder
-    elif dtype_code == FreqGroup.FR_MTH.value:
+    elif fgroup == FreqGroup.FR_MTH:
         return _monthly_finder
     elif (dtype_code >= FreqGroup.FR_BUS.value) or fgroup == FreqGroup.FR_WK:
         return _daily_finder
@@ -917,7 +922,7 @@ class TimeSeries_DateLocator(Locator):
 
     Parameters
     ----------
-    freq : {var}
+    freq : BaseOffset
         Valid frequency specifier.
     minor_locator : {False, True}, optional
         Whether the locator is for minor ticks (True) or not.
@@ -931,7 +936,7 @@ class TimeSeries_DateLocator(Locator):
 
     def __init__(
         self,
-        freq,
+        freq: BaseOffset,
         minor_locator=False,
         dynamic_mode=True,
         base=1,
@@ -939,7 +944,7 @@ class TimeSeries_DateLocator(Locator):
         month=1,
         day=1,
         plot_obj=None,
-    ):
+    ) -> None:
         freq = to_offset(freq)
         self.freq = freq
         self.base = base
@@ -1008,7 +1013,7 @@ class TimeSeries_DateFormatter(Formatter):
 
     Parameters
     ----------
-    freq : {int, string}
+    freq : BaseOffset
         Valid frequency specifier.
     minor_locator : bool, default False
         Whether the current formatter should apply to minor ticks (True) or
@@ -1019,16 +1024,16 @@ class TimeSeries_DateFormatter(Formatter):
 
     def __init__(
         self,
-        freq,
+        freq: BaseOffset,
         minor_locator: bool = False,
         dynamic_mode: bool = True,
         plot_obj=None,
-    ):
+    ) -> None:
         freq = to_offset(freq)
         self.format = None
         self.freq = freq
-        self.locs: List[Any] = []  # unused, for matplotlib compat
-        self.formatdict: Optional[Dict[Any, Any]] = None
+        self.locs: list[Any] = []  # unused, for matplotlib compat
+        self.formatdict: dict[Any, Any] | None = None
         self.isminor = minor_locator
         self.isdynamic = dynamic_mode
         self.offset = 0
@@ -1071,7 +1076,9 @@ class TimeSeries_DateFormatter(Formatter):
             fmt = self.formatdict.pop(x, "")
             if isinstance(fmt, np.bytes_):
                 fmt = fmt.decode("utf-8")
-            return Period(ordinal=int(x), freq=self.freq).strftime(fmt)
+            period = Period(ordinal=int(x), freq=self.freq)
+            assert isinstance(period, Period)
+            return period.strftime(fmt)
 
 
 class TimeSeries_TimedeltaFormatter(Formatter):
@@ -1084,7 +1091,7 @@ class TimeSeries_TimedeltaFormatter(Formatter):
         """
         Convert seconds to 'D days HH:MM:SS.F'
         """
-        s, ns = divmod(x, 10 ** 9)
+        s, ns = divmod(x, 10**9)
         m, s = divmod(s, 60)
         h, m = divmod(m, 60)
         d, h = divmod(h, 24)
@@ -1098,7 +1105,7 @@ class TimeSeries_TimedeltaFormatter(Formatter):
 
     def __call__(self, x, pos=0) -> str:
         (vmin, vmax) = tuple(self.axis.get_view_interval())
-        n_decimals = int(np.ceil(np.log10(100 * 10 ** 9 / abs(vmax - vmin))))
+        n_decimals = int(np.ceil(np.log10(100 * 10**9 / abs(vmax - vmin))))
         if n_decimals > 9:
             n_decimals = 9
         return self.format_timedelta_ticks(x, pos, n_decimals)

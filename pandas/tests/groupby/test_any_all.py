@@ -61,6 +61,28 @@ def test_any():
     tm.assert_frame_equal(result, expected)
 
 
+def test_any_non_keyword_deprecation():
+    df = DataFrame({"A": [1, 2], "B": [0, 2], "C": [0, 0]})
+    msg = (
+        "In a future version of pandas all arguments of "
+        "DataFrame.any and Series.any will be keyword-only."
+    )
+    with tm.assert_produces_warning(FutureWarning, match=msg):
+        result = df.any("index", None)
+    expected = Series({"A": True, "B": True, "C": False})
+    tm.assert_series_equal(result, expected)
+
+    s = Series([False, False, False])
+    msg = (
+        "In a future version of pandas all arguments of "
+        "DataFrame.any and Series.any will be keyword-only."
+    )
+    with tm.assert_produces_warning(FutureWarning, match=msg):
+        result = s.any("index")
+    expected = False
+    tm.assert_equal(result, expected)
+
+
 @pytest.mark.parametrize("bool_agg_func", ["any", "all"])
 def test_bool_aggs_dup_column_labels(bool_agg_func):
     # 21668
@@ -151,4 +173,40 @@ def test_masked_bool_aggs_skipna(bool_agg_func, dtype, skipna, frame_or_series):
     expected = frame_or_series([expected_res], index=[1], dtype="boolean")
 
     result = obj.groupby([1, 1]).agg(bool_agg_func, skipna=skipna)
+    tm.assert_equal(result, expected)
+
+
+@pytest.mark.parametrize(
+    "bool_agg_func,data,expected_res",
+    [
+        ("any", [pd.NA, np.nan], False),
+        ("any", [pd.NA, 1, np.nan], True),
+        ("all", [pd.NA, pd.NaT], True),
+        ("all", [pd.NA, False, pd.NaT], False),
+    ],
+)
+def test_object_type_missing_vals(bool_agg_func, data, expected_res, frame_or_series):
+    # GH#37501
+    obj = frame_or_series(data, dtype=object)
+    result = obj.groupby([1] * len(data)).agg(bool_agg_func)
+    expected = frame_or_series([expected_res], index=[1], dtype="bool")
+    tm.assert_equal(result, expected)
+
+
+@pytest.mark.filterwarnings("ignore:Dropping invalid columns:FutureWarning")
+@pytest.mark.parametrize("bool_agg_func", ["any", "all"])
+def test_object_NA_raises_with_skipna_false(bool_agg_func):
+    # GH#37501
+    ser = Series([pd.NA], dtype=object)
+    with pytest.raises(TypeError, match="boolean value of NA is ambiguous"):
+        ser.groupby([1]).agg(bool_agg_func, skipna=False)
+
+
+@pytest.mark.parametrize("bool_agg_func", ["any", "all"])
+def test_empty(frame_or_series, bool_agg_func):
+    # GH 45231
+    kwargs = {"columns": ["a"]} if frame_or_series is DataFrame else {"name": "a"}
+    obj = frame_or_series(**kwargs, dtype=object)
+    result = getattr(obj.groupby(obj.index), bool_agg_func)()
+    expected = frame_or_series(**kwargs, dtype=bool)
     tm.assert_equal(result, expected)

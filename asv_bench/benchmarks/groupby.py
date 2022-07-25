@@ -7,6 +7,7 @@ import numpy as np
 from pandas import (
     Categorical,
     DataFrame,
+    Index,
     MultiIndex,
     Series,
     Timestamp,
@@ -18,6 +19,7 @@ from .pandas_vb_common import tm
 
 method_blocklist = {
     "object": {
+        "diff",
         "median",
         "prod",
         "sem",
@@ -73,7 +75,7 @@ class Apply:
     params = [4, 5]
 
     def setup(self, factor):
-        N = 10 ** factor
+        N = 10**factor
         # two cases:
         # - small groups: small data (N**4) + many labels (2000) -> average group
         #   size of 5 (-> larger overhead of slicing method)
@@ -110,13 +112,25 @@ class Apply:
         self.df.groupby("key").apply(self.df_copy_function)
 
 
+class ApplyNonUniqueUnsortedIndex:
+    def setup(self):
+        # GH 46527
+        # unsorted and non-unique index
+        idx = np.arange(100)[::-1]
+        idx = Index(np.repeat(idx, 200), name="key")
+        self.df = DataFrame(np.random.randn(len(idx), 10), index=idx)
+
+    def time_groupby_apply_non_unique_unsorted_index(self):
+        self.df.groupby("key", group_keys=False).apply(lambda x: x)
+
+
 class Groups:
 
     param_names = ["key"]
     params = ["int64_small", "int64_large", "object_small", "object_large"]
 
     def setup_cache(self):
-        size = 10 ** 6
+        size = 10**6
         data = {
             "int64_small": Series(np.random.randint(0, 100, size=size)),
             "int64_large": Series(np.random.randint(0, 10000, size=size)),
@@ -160,7 +174,7 @@ class Nth:
     params = ["float32", "float64", "datetime", "object"]
 
     def setup(self, dtype):
-        N = 10 ** 5
+        N = 10**5
         # with datetimes (GH7555)
         if dtype == "datetime":
             values = date_range("1/1/2011", periods=N, freq="s")
@@ -268,7 +282,7 @@ class CountMultiInt:
 
 class AggFunctions:
     def setup_cache(self):
-        N = 10 ** 5
+        N = 10**5
         fac1 = np.array(["A", "B", "C"], dtype="O")
         fac2 = np.array(["one", "two"], dtype="O")
         df = DataFrame(
@@ -301,7 +315,7 @@ class AggFunctions:
 
 class GroupStrings:
     def setup(self):
-        n = 2 * 10 ** 5
+        n = 2 * 10**5
         alpha = list(map("".join, product(ascii_letters, repeat=4)))
         data = np.random.choice(alpha, (n // 5, 4), replace=False)
         data = np.repeat(data, 5, axis=0)
@@ -315,7 +329,7 @@ class GroupStrings:
 
 class MultiColumn:
     def setup_cache(self):
-        N = 10 ** 5
+        N = 10**5
         key1 = np.tile(np.arange(100, dtype=object), 1000)
         key2 = key1.copy()
         np.random.shuffle(key1)
@@ -345,7 +359,7 @@ class MultiColumn:
 
 class Size:
     def setup(self):
-        n = 10 ** 5
+        n = 10**5
         offsets = np.random.randint(n, size=n).astype("timedelta64[ns]")
         dates = np.datetime64("now") + offsets
         self.df = DataFrame(
@@ -367,6 +381,18 @@ class Size:
 
     def time_category_size(self):
         self.draws.groupby(self.cats).size()
+
+
+class Shift:
+    def setup(self):
+        N = 18
+        self.df = DataFrame({"g": ["a", "b"] * 9, "v": list(range(N))})
+
+    def time_defaults(self):
+        self.df.groupby("g").shift()
+
+    def time_fill_value(self):
+        self.df.groupby("g").shift(fill_value=99)
 
 
 class FillNA:
@@ -391,9 +417,9 @@ class FillNA:
 
 class GroupByMethods:
 
-    param_names = ["dtype", "method", "application"]
+    param_names = ["dtype", "method", "application", "ncols"]
     params = [
-        ["int", "float", "object", "datetime"],
+        ["int", "int16", "float", "object", "datetime", "uint"],
         [
             "all",
             "any",
@@ -405,6 +431,7 @@ class GroupByMethods:
             "cumprod",
             "cumsum",
             "describe",
+            "diff",
             "ffill",
             "first",
             "head",
@@ -431,17 +458,43 @@ class GroupByMethods:
             "var",
         ],
         ["direct", "transformation"],
+        [1, 5],
     ]
 
-    def setup(self, dtype, method, application):
+    def setup(self, dtype, method, application, ncols):
         if method in method_blocklist.get(dtype, {}):
             raise NotImplementedError  # skip benchmark
-        ngroups = 1000
+
+        if ncols != 1 and method in ["value_counts", "unique"]:
+            # DataFrameGroupBy doesn't have these methods
+            raise NotImplementedError
+
+        if application == "transformation" and method in [
+            "describe",
+            "head",
+            "tail",
+            "unique",
+            "value_counts",
+            "size",
+        ]:
+            # DataFrameGroupBy doesn't have these methods
+            raise NotImplementedError
+
+        if method == "describe":
+            ngroups = 20
+        elif method in ["mad", "skew"]:
+            ngroups = 100
+        else:
+            ngroups = 1000
         size = ngroups * 2
-        rng = np.arange(ngroups)
-        values = rng.take(np.random.randint(0, ngroups, size=size))
+        rng = np.arange(ngroups).reshape(-1, 1)
+        rng = np.broadcast_to(rng, (len(rng), ncols))
+        taker = np.random.randint(0, ngroups, size=size)
+        values = rng.take(taker, axis=0)
         if dtype == "int":
             key = np.random.randint(0, size, size=size)
+        elif dtype in ("int16", "uint"):
+            key = np.random.randint(0, size, size=size, dtype=dtype)
         elif dtype == "float":
             key = np.concatenate(
                 [np.random.random(ngroups) * 0.1, np.random.random(ngroups) * 10.0]
@@ -451,28 +504,30 @@ class GroupByMethods:
         elif dtype == "datetime":
             key = date_range("1/1/2011", periods=size, freq="s")
 
-        df = DataFrame({"values": values, "key": key})
+        cols = [f"values{n}" for n in range(ncols)]
+        df = DataFrame(values, columns=cols)
+        df["key"] = key
 
-        if application == "transform":
-            if method == "describe":
-                raise NotImplementedError
+        if len(cols) == 1:
+            cols = cols[0]
 
-            self.as_group_method = lambda: df.groupby("key")["values"].transform(method)
-            self.as_field_method = lambda: df.groupby("values")["key"].transform(method)
+        if application == "transformation":
+            self.as_group_method = lambda: df.groupby("key")[cols].transform(method)
+            self.as_field_method = lambda: df.groupby(cols)["key"].transform(method)
         else:
-            self.as_group_method = getattr(df.groupby("key")["values"], method)
-            self.as_field_method = getattr(df.groupby("values")["key"], method)
+            self.as_group_method = getattr(df.groupby("key")[cols], method)
+            self.as_field_method = getattr(df.groupby(cols)["key"], method)
 
-    def time_dtype_as_group(self, dtype, method, application):
+    def time_dtype_as_group(self, dtype, method, application, ncols):
         self.as_group_method()
 
-    def time_dtype_as_field(self, dtype, method, application):
+    def time_dtype_as_field(self, dtype, method, application, ncols):
         self.as_field_method()
 
 
 class GroupByCythonAgg:
     """
-    Benchmarks specifically targetting our cython aggregation algorithms
+    Benchmarks specifically targeting our cython aggregation algorithms
     (using a big enough dataframe with simple key, so a large part of the
     time is actually spent in the grouped aggregation).
     """
@@ -505,11 +560,11 @@ class GroupByCythonAgg:
         self.df.groupby("key").agg(method)
 
 
-class CumminMax:
+class Cumulative:
     param_names = ["dtype", "method"]
     params = [
         ["float64", "int64", "Float64", "Int64"],
-        ["cummin", "cummax"],
+        ["cummin", "cummax", "cumsum"],
     ]
 
     def setup(self, dtype, method):
@@ -542,7 +597,7 @@ class RankWithTies:
     ]
 
     def setup(self, dtype, tie_method):
-        N = 10 ** 4
+        N = 10**4
         if dtype == "datetime64":
             data = np.array([Timestamp("2011/01/01")] * N, dtype=dtype)
         else:
@@ -566,9 +621,41 @@ class Float32:
         self.df.groupby(["a"])["b"].sum()
 
 
+class String:
+    # GH#41596
+    param_names = ["dtype", "method"]
+    params = [
+        ["str", "string[python]"],
+        [
+            "sum",
+            "prod",
+            "min",
+            "max",
+            "mean",
+            "median",
+            "var",
+            "first",
+            "last",
+            "any",
+            "all",
+        ],
+    ]
+
+    def setup(self, dtype, method):
+        cols = list("abcdefghjkl")
+        self.df = DataFrame(
+            np.random.randint(0, 100, size=(1_000_000, len(cols))),
+            columns=cols,
+            dtype=dtype,
+        )
+
+    def time_str_func(self, dtype, method):
+        self.df.groupby("a")[self.df.columns[1:]].agg(method)
+
+
 class Categories:
     def setup(self):
-        N = 10 ** 5
+        N = 10**5
         arr = np.random.random(N)
         data = {"a": Categorical(np.random.randint(10000, size=N)), "b": arr}
         self.df = DataFrame(data)
@@ -610,14 +697,14 @@ class Datelike:
     param_names = ["grouper"]
 
     def setup(self, grouper):
-        N = 10 ** 4
+        N = 10**4
         rng_map = {
             "period_range": period_range,
             "date_range": date_range,
             "date_range_tz": partial(date_range, tz="US/Central"),
         }
         self.grouper = rng_map[grouper]("1900-01-01", freq="D", periods=N)
-        self.df = DataFrame(np.random.randn(10 ** 4, 2))
+        self.df = DataFrame(np.random.randn(10**4, 2))
 
     def time_sum(self, grouper):
         self.df.groupby(self.grouper).sum()
@@ -663,6 +750,18 @@ class Transform:
         data = DataFrame(arr, index=index, columns=["col1", "col20", "col3"])
         self.df = data
 
+        n = 1000
+        self.df_wide = DataFrame(
+            np.random.randn(n, n),
+            index=np.random.choice(range(10), n),
+        )
+
+        n = 1_000_000
+        self.df_tall = DataFrame(
+            np.random.randn(n, 3),
+            index=np.random.randint(0, 5, n),
+        )
+
         n = 20000
         self.df1 = DataFrame(
             np.random.randint(1, n, (n, 3)), columns=["jim", "joe", "jolie"]
@@ -681,6 +780,12 @@ class Transform:
 
     def time_transform_ufunc_max(self):
         self.df.groupby(level="lev1").transform(np.max)
+
+    def time_transform_lambda_max_tall(self):
+        self.df_tall.groupby(level=0).transform(lambda x: np.max(x, axis=0))
+
+    def time_transform_lambda_max_wide(self):
+        self.df_wide.groupby(level=0).transform(lambda x: np.max(x, axis=0))
 
     def time_transform_multi_key1(self):
         self.df1.groupby(["jim", "joe"])["jolie"].transform("max")
@@ -726,7 +831,7 @@ class TransformEngine:
     params = [[True, False]]
 
     def setup(self, parallel):
-        N = 10 ** 3
+        N = 10**3
         data = DataFrame(
             {0: [str(i) for i in range(100)] * N, 1: list(range(100)) * N},
             columns=[0, 1],
@@ -769,7 +874,7 @@ class AggEngine:
     params = [[True, False]]
 
     def setup(self, parallel):
-        N = 10 ** 3
+        N = 10**3
         data = DataFrame(
             {0: [str(i) for i in range(100)] * N, 1: list(range(100)) * N},
             columns=[0, 1],
@@ -828,6 +933,20 @@ class AggEngine:
             return total
 
         self.grouper.agg(function, engine="cython")
+
+
+class Sample:
+    def setup(self):
+        N = 10**3
+        self.df = DataFrame({"a": np.zeros(N)})
+        self.groups = np.arange(0, N)
+        self.weights = np.ones(N)
+
+    def time_sample(self):
+        self.df.groupby(self.groups).sample(n=1)
+
+    def time_sample_weights(self):
+        self.df.groupby(self.groups).sample(n=1, weights=self.weights)
 
 
 from .pandas_vb_common import setup  # noqa: F401 isort:skip

@@ -3,22 +3,18 @@
 # Run checks related to code quality.
 #
 # This script is intended for both the CI and to check locally that code standards are
-# respected. We are currently linting (PEP-8 and similar), looking for patterns of
-# common mistakes (sphinx directives with missing blank lines, old style classes,
-# unwanted imports...), we run doctests here (currently some files only), and we
+# respected. We run doctests here (currently some files only), and we
 # validate formatting error in docstrings.
 #
 # Usage:
 #   $ ./ci/code_checks.sh               # run all checks
-#   $ ./ci/code_checks.sh lint          # run linting only
-#   $ ./ci/code_checks.sh patterns      # check for patterns that should not exist
 #   $ ./ci/code_checks.sh code          # checks on imported code
 #   $ ./ci/code_checks.sh doctests      # run doctests
 #   $ ./ci/code_checks.sh docstrings    # validate docstring errors
-#   $ ./ci/code_checks.sh typing	# run static type analysis
+#   $ ./ci/code_checks.sh single-docs   # check single-page docs build warning-free
 
-[[ -z "$1" || "$1" == "lint" || "$1" == "patterns" || "$1" == "code" || "$1" == "doctests" || "$1" == "docstrings" || "$1" == "typing" ]] || \
-    { echo "Unknown command $1. Usage: $0 [lint|patterns|code|doctests|docstrings|typing]"; exit 9999; }
+[[ -z "$1" || "$1" == "code" || "$1" == "doctests" || "$1" == "docstrings" || "$1" == "single-docs" ]] || \
+    { echo "Unknown command $1. Usage: $0 [code|doctests|docstrings]"; exit 9999; }
 
 BASE_DIR="$(dirname $0)/.."
 RET=0
@@ -38,45 +34,7 @@ function invgrep {
 }
 
 if [[ "$GITHUB_ACTIONS" == "true" ]]; then
-    FLAKE8_FORMAT="##[error]%(path)s:%(row)s:%(col)s:%(code)s:%(text)s"
     INVGREP_PREPEND="##[error]"
-else
-    FLAKE8_FORMAT="default"
-fi
-
-### LINTING ###
-if [[ -z "$CHECK" || "$CHECK" == "lint" ]]; then
-
-    # Check that cython casting is of the form `<type>obj` as opposed to `<type> obj`;
-    # it doesn't make a difference, but we want to be internally consistent.
-    # Note: this grep pattern is (intended to be) equivalent to the python
-    # regex r'(?<![ ->])> '
-    MSG='Linting .pyx code for spacing conventions in casting' ; echo $MSG
-    invgrep -r -E --include '*.pyx' --include '*.pxi.in' '[a-zA-Z0-9*]> ' pandas/_libs
-    RET=$(($RET + $?)) ; echo $MSG "DONE"
-
-    # readability/casting: Warnings about C casting instead of C++ casting
-    # runtime/int: Warnings about using C number types instead of C++ ones
-    # build/include_subdir: Warnings about prefacing included header files with directory
-
-fi
-
-### PATTERNS ###
-if [[ -z "$CHECK" || "$CHECK" == "patterns" ]]; then
-
-    # Check for the following code in the extension array base tests: `tm.assert_frame_equal` and `tm.assert_series_equal`
-    MSG='Check for invalid EA testing' ; echo $MSG
-    invgrep -r -E --include '*.py' --exclude base.py 'tm.assert_(series|frame)_equal' pandas/tests/extension/base
-    RET=$(($RET + $?)) ; echo $MSG "DONE"
-
-    MSG='Check for deprecated messages without sphinx directive' ; echo $MSG
-    invgrep -R --include="*.py" --include="*.pyx" -E "(DEPRECATED|DEPRECATE|Deprecated)(:|,|\.)" pandas
-    RET=$(($RET + $?)) ; echo $MSG "DONE"
-
-    MSG='Check for backticks incorrectly rendering because of missing spaces' ; echo $MSG
-    invgrep -R --include="*.rst" -E "[a-zA-Z0-9]\`\`?[a-zA-Z0-9]" doc/source/
-    RET=$(($RET + $?)) ; echo $MSG "DONE"
-
 fi
 
 ### CODE ###
@@ -106,34 +64,13 @@ fi
 ### DOCTESTS ###
 if [[ -z "$CHECK" || "$CHECK" == "doctests" ]]; then
 
-    MSG='Doctests for individual files' ; echo $MSG
-    pytest -q --doctest-modules \
-      pandas/core/accessor.py \
-      pandas/core/aggregation.py \
-      pandas/core/algorithms.py \
-      pandas/core/base.py \
-      pandas/core/construction.py \
-      pandas/core/frame.py \
-      pandas/core/generic.py \
-      pandas/core/indexers.py \
-      pandas/core/nanops.py \
-      pandas/core/series.py \
-      pandas/io/sql.py
+    MSG='Doctests' ; echo $MSG
+    # Ignore test_*.py files or else the unit tests will run
+    python -m pytest --doctest-modules --ignore-glob="**/test_*.py" pandas
     RET=$(($RET + $?)) ; echo $MSG "DONE"
 
-    MSG='Doctests for directories' ; echo $MSG
-    pytest -q --doctest-modules \
-      pandas/core/arrays/ \
-      pandas/core/computation/ \
-      pandas/core/dtypes/ \
-      pandas/core/groupby/ \
-      pandas/core/indexes/ \
-      pandas/core/ops/ \
-      pandas/core/reshape/ \
-      pandas/core/strings/ \
-      pandas/core/tools/ \
-      pandas/core/window/ \
-      pandas/tseries/
+    MSG='Cython Doctests' ; echo $MSG
+    python -m pytest --doctest-cython pandas/_libs
     RET=$(($RET + $?)) ; echo $MSG "DONE"
 
 fi
@@ -141,21 +78,17 @@ fi
 ### DOCSTRINGS ###
 if [[ -z "$CHECK" || "$CHECK" == "docstrings" ]]; then
 
-    MSG='Validate docstrings (GL03, GL04, GL05, GL06, GL07, GL09, GL10, SS01, SS02, SS04, SS05, PR03, PR04, PR05, PR10, EX04, RT01, RT04, RT05, SA02, SA03)' ; echo $MSG
-    $BASE_DIR/scripts/validate_docstrings.py --format=actions --errors=GL03,GL04,GL05,GL06,GL07,GL09,GL10,SS02,SS04,SS05,PR03,PR04,PR05,PR10,EX04,RT01,RT04,RT05,SA02,SA03
+    MSG='Validate docstrings (EX04, GL01, GL02, GL03, GL04, GL05, GL06, GL07, GL09, GL10, PR03, PR04, PR05, PR06, PR08, PR09, PR10, RT01, RT04, RT05, SA02, SA03, SA04, SS01, SS02, SS03, SS04, SS05)' ; echo $MSG
+    $BASE_DIR/scripts/validate_docstrings.py --format=actions --errors=EX04,GL01,GL02,GL03,GL04,GL05,GL06,GL07,GL09,GL10,PR03,PR04,PR05,PR06,PR08,PR09,PR10,RT01,RT04,RT05,SA02,SA03,SA04,SS01,SS02,SS03,SS04,SS05
     RET=$(($RET + $?)) ; echo $MSG "DONE"
 
 fi
 
-### TYPING ###
-if [[ -z "$CHECK" || "$CHECK" == "typing" ]]; then
-
-    echo "mypy --version"
-    mypy --version
-
-    MSG='Performing static analysis using mypy' ; echo $MSG
-    mypy pandas
-    RET=$(($RET + $?)) ; echo $MSG "DONE"
+### SINGLE-PAGE DOCS ###
+if [[ -z "$CHECK" || "$CHECK" == "single-docs" ]]; then
+    python doc/make.py --warnings-are-errors --single pandas.Series.value_counts
+    python doc/make.py --warnings-are-errors --single pandas.Series.str.split
+    python doc/make.py clean
 fi
 
 exit $RET

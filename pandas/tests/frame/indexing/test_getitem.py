@@ -8,6 +8,7 @@ from pandas import (
     CategoricalDtype,
     CategoricalIndex,
     DataFrame,
+    DatetimeIndex,
     Index,
     MultiIndex,
     Series,
@@ -69,6 +70,13 @@ class TestGetitem:
         tm.assert_series_equal(result, expected)
 
         result = df.loc[:, "A"]
+        tm.assert_series_equal(result, expected)
+
+    def test_getitem_string_columns(self):
+        # GH#46185
+        df = DataFrame([[1, 2]], columns=Index(["A", "B"], dtype="string"))
+        result = df.A
+        expected = df["A"]
         tm.assert_series_equal(result, expected)
 
 
@@ -133,7 +141,11 @@ class TestGetitemListLike:
         idx = idx_type(keys)
         idx_check = list(idx_type(keys))
 
-        result = frame[idx]
+        if isinstance(idx, (set, dict)):
+            with tm.assert_produces_warning(FutureWarning):
+                result = frame[idx]
+        else:
+            result = frame[idx]
 
         expected = frame.loc[:, idx_check]
         expected.columns.names = frame.columns.names
@@ -142,7 +154,8 @@ class TestGetitemListLike:
 
         idx = idx_type(keys + [missing])
         with pytest.raises(KeyError, match="not in index"):
-            frame[idx]
+            with tm.assert_produces_warning(FutureWarning):
+                frame[idx]
 
     def test_getitem_iloc_generator(self):
         # GH#39614
@@ -299,9 +312,10 @@ class TestGetitemBooleanMask:
 
         # boolean with the duplicate raises
         df = df_dup_cols
-        msg = "cannot reindex from a duplicate axis"
+        msg = "cannot reindex on an axis with duplicate labels"
         with pytest.raises(ValueError, match=msg):
-            df[df.A > 6]
+            with tm.assert_produces_warning(FutureWarning, match="non-unique"):
+                df[df.A > 6]
 
     def test_getitem_boolean_series_with_duplicate_columns(self, df_dup_cols):
         # boolean indexing
@@ -343,6 +357,21 @@ class TestGetitemBooleanMask:
         df2 = df[df > 0]
         tm.assert_frame_equal(df, df2)
 
+    def test_getitem_returns_view_when_column_is_unique_in_df(self):
+        # GH#45316
+        df = DataFrame([[1, 2, 3], [4, 5, 6]], columns=["a", "a", "b"])
+        view = df["b"]
+        view.loc[:] = 100
+        expected = DataFrame([[1, 2, 100], [4, 5, 100]], columns=["a", "a", "b"])
+        tm.assert_frame_equal(df, expected)
+
+    def test_getitem_frozenset_unique_in_column(self):
+        # GH#41062
+        df = DataFrame([[1, 2, 3, 4]], columns=[frozenset(["KEY"]), "B", "C", "C"])
+        result = df[frozenset(["KEY"])]
+        expected = Series([1], name=frozenset(["KEY"]))
+        tm.assert_series_equal(result, expected)
+
 
 class TestGetitemSlice:
     def test_getitem_slice_float64(self, frame_or_series):
@@ -363,3 +392,37 @@ class TestGetitemSlice:
 
         result = obj.loc[start:end]
         tm.assert_equal(result, expected)
+
+    def test_getitem_datetime_slice(self):
+        # GH#43223
+        df = DataFrame(
+            {"a": 0},
+            index=DatetimeIndex(
+                [
+                    "11.01.2011 22:00",
+                    "11.01.2011 23:00",
+                    "12.01.2011 00:00",
+                    "2011-01-13 00:00",
+                ]
+            ),
+        )
+        with tm.assert_produces_warning(FutureWarning):
+            result = df["2011-01-01":"2011-11-01"]
+        expected = DataFrame(
+            {"a": 0},
+            index=DatetimeIndex(
+                ["11.01.2011 22:00", "11.01.2011 23:00", "2011-01-13 00:00"]
+            ),
+        )
+        tm.assert_frame_equal(result, expected)
+
+
+class TestGetitemDeprecatedIndexers:
+    @pytest.mark.parametrize("key", [{"a", "b"}, {"a": "a"}])
+    def test_getitem_dict_and_set_deprecated(self, key):
+        # GH#42825
+        df = DataFrame(
+            [[1, 2], [3, 4]], columns=MultiIndex.from_tuples([("a", 1), ("b", 2)])
+        )
+        with tm.assert_produces_warning(FutureWarning):
+            df[key]

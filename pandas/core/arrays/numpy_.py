@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import numbers
-
 import numpy as np
-from numpy.lib.mixins import NDArrayOperatorsMixin
 
 from pandas._libs import lib
 from pandas._typing import (
     Dtype,
     NpDtype,
     Scalar,
+    npt,
 )
 from pandas.compat.numpy import function as nv
 
@@ -18,6 +16,7 @@ from pandas.core.dtypes.dtypes import PandasDtype
 from pandas.core.dtypes.missing import isna
 
 from pandas.core import (
+    arraylike,
     nanops,
     ops,
 )
@@ -30,13 +29,10 @@ from pandas.core.strings.object_array import ObjectStringArrayMixin
 class PandasArray(
     OpsMixin,
     NDArrayBackedExtensionArray,
-    NDArrayOperatorsMixin,
     ObjectStringArrayMixin,
 ):
     """
     A pandas ExtensionArray for NumPy data.
-
-    .. versionadded:: 0.24.0
 
     This is mostly for internal compatibility, and is not especially
     useful on its own.
@@ -64,11 +60,13 @@ class PandasArray(
     _typ = "npy_extension"
     __array_priority__ = 1000
     _ndarray: np.ndarray
+    _dtype: PandasDtype
+    _internal_fill_value = np.nan
 
     # ------------------------------------------------------------------------
     # Constructors
 
-    def __init__(self, values: np.ndarray | PandasArray, copy: bool = False):
+    def __init__(self, values: np.ndarray | PandasArray, copy: bool = False) -> None:
         if isinstance(values, type(self)):
             values = values._ndarray
         if not isinstance(values, np.ndarray):
@@ -83,8 +81,8 @@ class PandasArray(
         if copy:
             values = values.copy()
 
-        self._ndarray = values
-        self._dtype = PandasDtype(values.dtype)
+        dtype = PandasDtype(values.dtype)
+        super().__init__(values, dtype)
 
     @classmethod
     def _from_sequence(
@@ -111,10 +109,6 @@ class PandasArray(
             result = result.copy()
         return cls(result)
 
-    @classmethod
-    def _from_factorized(cls, values, original) -> PandasArray:
-        return cls(values)
-
     def _from_backing_data(self, arr: np.ndarray) -> PandasArray:
         return type(self)(arr)
 
@@ -131,30 +125,31 @@ class PandasArray(
     def __array__(self, dtype: NpDtype | None = None) -> np.ndarray:
         return np.asarray(self._ndarray, dtype=dtype)
 
-    _HANDLED_TYPES = (np.ndarray, numbers.Number)
-
     def __array_ufunc__(self, ufunc: np.ufunc, method: str, *inputs, **kwargs):
         # Lightly modified version of
         # https://numpy.org/doc/stable/reference/generated/numpy.lib.mixins.NDArrayOperatorsMixin.html
         # The primary modification is not boxing scalar return values
         # in PandasArray, since pandas' ExtensionArrays are 1-d.
         out = kwargs.get("out", ())
-        for x in inputs + out:
-            # Only support operations with instances of _HANDLED_TYPES.
-            # Use PandasArray instead of type(self) for isinstance to
-            # allow subclasses that don't override __array_ufunc__ to
-            # handle PandasArray objects.
-            if not isinstance(x, self._HANDLED_TYPES + (PandasArray,)):
-                return NotImplemented
 
-        if ufunc not in [np.logical_or, np.bitwise_or, np.bitwise_xor]:
-            # For binary ops, use our custom dunder methods
-            # We haven't implemented logical dunder funcs, so exclude these
-            #  to avoid RecursionError
-            result = ops.maybe_dispatch_ufunc_to_dunder_op(
+        result = ops.maybe_dispatch_ufunc_to_dunder_op(
+            self, ufunc, method, *inputs, **kwargs
+        )
+        if result is not NotImplemented:
+            return result
+
+        if "out" in kwargs:
+            # e.g. test_ufunc_unary
+            return arraylike.dispatch_ufunc_with_out(
+                self, ufunc, method, *inputs, **kwargs
+            )
+
+        if method == "reduce":
+            result = arraylike.dispatch_reduction_ufunc(
                 self, ufunc, method, *inputs, **kwargs
             )
             if result is not NotImplemented:
+                # e.g. tests.series.test_ufunc.TestNumpyReductions
                 return result
 
         # Defer to the implementation of the ufunc on unwrapped values.
@@ -165,23 +160,22 @@ class PandasArray(
             )
         result = getattr(ufunc, method)(*inputs, **kwargs)
 
-        if type(result) is tuple and len(result):
-            # multiple return values
-            if not lib.is_scalar(result[0]):
-                # re-box array-like results
-                return tuple(type(self)(x) for x in result)
-            else:
-                # but not scalar reductions
-                return result
+        if ufunc.nout > 1:
+            # multiple return values; re-box array-like results
+            return tuple(type(self)(x) for x in result)
         elif method == "at":
             # no return value
             return None
-        else:
-            # one return value
-            if not lib.is_scalar(result):
-                # re-box array-like results, but not scalar reductions
-                result = type(self)(result)
+        elif method == "reduce":
+            if isinstance(result, np.ndarray):
+                # e.g. test_np_reduce_2d
+                return type(self)(result)
+
+            # e.g. test_np_max_nested_tuples
             return result
+        else:
+            # one return value; re-box array-like results
+            return type(self)(result)
 
     # ------------------------------------------------------------------------
     # Pandas ExtensionArray Interface
@@ -189,14 +183,18 @@ class PandasArray(
     def isna(self) -> np.ndarray:
         return isna(self._ndarray)
 
-    def _validate_fill_value(self, fill_value):
+    def _validate_scalar(self, fill_value):
         if fill_value is None:
             # Primarily for subclasses
             fill_value = self.dtype.na_value
         return fill_value
 
-    def _values_for_factorize(self) -> tuple[np.ndarray, int]:
-        return self._ndarray, -1
+    def _values_for_factorize(self) -> tuple[np.ndarray, float | None]:
+        if self.dtype.kind in ["i", "u", "b"]:
+            fv = None
+        else:
+            fv = np.nan
+        return self._ndarray, fv
 
     # ------------------------------------------------------------------------
     # Reductions
@@ -366,14 +364,11 @@ class PandasArray(
     # ------------------------------------------------------------------------
     # Additional Methods
 
-    # error: Argument 1 of "to_numpy" is incompatible with supertype "ExtensionArray";
-    # supertype defines the argument type as "Union[ExtensionDtype, str, dtype[Any],
-    # Type[str], Type[float], Type[int], Type[complex], Type[bool], Type[object], None]"
-    def to_numpy(  # type: ignore[override]
+    def to_numpy(
         self,
-        dtype: NpDtype | None = None,
+        dtype: npt.DTypeLike | None = None,
         copy: bool = False,
-        na_value=lib.no_default,
+        na_value: object = lib.no_default,
     ) -> np.ndarray:
         result = np.asarray(self._ndarray, dtype=dtype)
 
@@ -390,6 +385,15 @@ class PandasArray(
 
     def __invert__(self) -> PandasArray:
         return type(self)(~self._ndarray)
+
+    def __neg__(self) -> PandasArray:
+        return type(self)(-self._ndarray)
+
+    def __pos__(self) -> PandasArray:
+        return type(self)(+self._ndarray)
+
+    def __abs__(self) -> PandasArray:
+        return type(self)(abs(self._ndarray))
 
     def _cmp_method(self, other, op):
         if isinstance(other, PandasArray):
